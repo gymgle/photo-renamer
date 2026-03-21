@@ -253,7 +253,7 @@ class PhotoRenamerTests(unittest.TestCase):
         mock_error.assert_called_once_with('Please choose a folder to process first.')
 
     def test_execute_returns_localized_missing_log_dir_with_path(self):
-        config = photo_renamer.RunConfig(dir_path='D:/ok', log_path='D:/missing-log-dir')
+        config = photo_renamer.RunConfig(dir_path='D:/ok', log_to_file=True, log_path='D:/missing-log-dir')
 
         with patch('photo_renamer.init_logger'), \
                 patch('photo_renamer.os.path.exists', side_effect=lambda path: path == 'D:/ok'), \
@@ -263,6 +263,15 @@ class PhotoRenamerTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(err, 'The selected log folder does not exist: D:/missing-log-dir')
         mock_error.assert_called_once_with('The selected log folder does not exist: D:/missing-log-dir')
+
+    def test_test_func_ignores_missing_log_dir_when_file_logging_disabled(self):
+        config = photo_renamer.RunConfig(dir_path='D:/ok', log_to_file=False, log_path='D:/missing-log-dir')
+
+        with patch('photo_renamer.os.path.exists', side_effect=lambda path: path == 'D:/ok'):
+            ok, err = photo_renamer.test_func(config)
+
+        self.assertTrue(ok)
+        self.assertEqual(err, 'tests passed')
 
     def test_format_about_message_contains_version_and_repo_url(self):
         message = photo_renamer.format_about_message('zh-CN')
@@ -491,11 +500,23 @@ class PhotoRenamerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir, \
                 patch.object(photo_renamer.sys, 'stdout', None), \
                 patch.object(photo_renamer.sys, 'stderr', None):
-            photo_renamer.init_logger(target_log_path=tmp_dir, extra_sink=lambda message: None)
+            photo_renamer.init_logger(target_log_path=tmp_dir, extra_sink=lambda message: None, log_to_file_enabled=True)
 
             self.assertEqual(len(photo_renamer.logger.handlers), 2)
             self.assertTrue(any(isinstance(handler, photo_renamer.CallbackLogHandler) for handler in photo_renamer.logger.handlers))
             self.assertTrue(any(isinstance(handler, RotatingFileHandler) for handler in photo_renamer.logger.handlers))
+            self._close_logger_handlers()
+
+    def test_init_logger_skips_file_handler_when_file_logging_disabled(self):
+        self._close_logger_handlers()
+
+        with patch.object(photo_renamer.sys, 'stdout', None), \
+                patch.object(photo_renamer.sys, 'stderr', None):
+            photo_renamer.init_logger(extra_sink=lambda message: None, log_to_file_enabled=False)
+
+            self.assertEqual(len(photo_renamer.logger.handlers), 1)
+            self.assertTrue(any(isinstance(handler, photo_renamer.CallbackLogHandler) for handler in photo_renamer.logger.handlers))
+            self.assertFalse(any(isinstance(handler, RotatingFileHandler) for handler in photo_renamer.logger.handlers))
             self._close_logger_handlers()
 
     def test_init_logger_emits_plain_messages_to_gui_sink(self):
@@ -510,6 +531,52 @@ class PhotoRenamerTests(unittest.TestCase):
             self.assertTrue(emitted_messages)
             self.assertEqual(emitted_messages[-1], 'Started processing...')
             self._close_logger_handlers()
+
+    def test_build_config_includes_log_to_file_toggle(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.media_mode_var = Mock()
+        gui.media_mode_var.get.return_value = 'all'
+        gui.regex_offset_var = Mock()
+        gui.regex_offset_var.get.return_value = ''
+        gui.dir_var = Mock()
+        gui.dir_var.get.return_value = 'D:/photos'
+        gui.format_var = Mock()
+        gui.format_var.get.return_value = ''
+        gui.recursion_var = Mock()
+        gui.recursion_var.get.return_value = True
+        gui.preview_var = Mock()
+        gui.preview_var.get.return_value = False
+        gui.disable_regex_var = Mock()
+        gui.disable_regex_var.get.return_value = False
+        gui.extension_var = Mock()
+        gui.extension_var.get.return_value = 'jpg'
+        gui.force_rename_var = Mock()
+        gui.force_rename_var.get.return_value = True
+        gui.log_level_var = Mock()
+        gui.log_level_var.get.return_value = 'INFO'
+        gui.log_to_file_var = Mock()
+        gui.log_to_file_var.get.return_value = True
+        gui.log_path_var = Mock()
+        gui.log_path_var.get.return_value = 'D:/logs'
+
+        config = gui._build_config()
+
+        self.assertTrue(config.log_to_file)
+        self.assertEqual(config.log_path, 'D:/logs')
+
+    def test_update_log_file_controls_grays_out_log_path_when_disabled(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.log_to_file_var = Mock()
+        gui.log_to_file_var.get.return_value = False
+        gui.log_dir_label = Mock()
+        gui.log_dir_entry = Mock()
+        gui.log_dir_button = Mock()
+
+        gui._update_log_file_controls()
+
+        gui.log_dir_label.configure.assert_called_once_with(foreground='#9ca3af')
+        gui.log_dir_entry.configure.assert_called_once_with(state='disabled')
+        gui.log_dir_button.configure.assert_called_once_with(state='disabled')
 
     def test_main_without_args_launches_gui(self):
         with patch('photo_renamer.launch_gui', return_value=0) as launch_gui:

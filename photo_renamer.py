@@ -86,6 +86,7 @@ TRANSLATIONS = {
         'extension_filter': '只处理这些格式',
         'time_offset': '文件名时间偏移',
         'log_level': '日志详细程度',
+        'log_to_file': '同时写入日志文件',
         'log_dir': '日志保存位置',
         'include_subdirs': '包含子文件夹',
         'preview_only': '仅预览新名字，不执行重命名',
@@ -164,6 +165,7 @@ TRANSLATIONS = {
         'extension_filter': 'Only these formats',
         'time_offset': 'Filename time offset',
         'log_level': 'Log detail',
+        'log_to_file': 'Also save logs to file',
         'log_dir': 'Log save location',
         'include_subdirs': 'Include subfolders',
         'preview_only': 'Preview only, will not rename',
@@ -384,6 +386,7 @@ class RunConfig:
     extensions: str = ''
     force_rename: bool = False
     log_level: str = 'INFO'
+    log_to_file: bool = False
     log_path: str = ''
     regex_offset: float = 0
     only_image: bool = False
@@ -436,6 +439,7 @@ disable_regex = False
 extensions = ''
 force_rename = False
 log_level = 'INFO'
+log_to_file = False
 log_path = ''
 regex_offset = 0
 only_image = False
@@ -452,6 +456,7 @@ def runtime_config() -> RunConfig:
         extensions=extensions,
         force_rename=force_rename,
         log_level=log_level,
+        log_to_file=log_to_file,
         log_path=log_path,
         regex_offset=regex_offset,
         only_image=only_image,
@@ -468,6 +473,7 @@ def apply_runtime_config(config: RunConfig) -> None:
     global extensions
     global force_rename
     global log_level
+    global log_to_file
     global log_path
     global regex_offset
     global only_image
@@ -481,6 +487,7 @@ def apply_runtime_config(config: RunConfig) -> None:
     extensions = config.extensions
     force_rename = config.force_rename
     log_level = config.log_level
+    log_to_file = config.log_to_file
     log_path = config.log_path
     regex_offset = config.regex_offset
     only_image = config.only_image
@@ -824,7 +831,7 @@ def test_func(config: RunConfig | None = None) -> tuple[bool, ValidationError | 
     if not os.path.exists(active_config.dir_path):
         return False, ValidationError('dir_not_exist', active_config.dir_path)
 
-    if active_config.log_path and not os.path.exists(active_config.log_path):
+    if active_config.log_to_file and active_config.log_path and not os.path.exists(active_config.log_path):
         return False, ValidationError('missing_log_dir', active_config.log_path)
 
     try:
@@ -843,7 +850,7 @@ def test_func(config: RunConfig | None = None) -> tuple[bool, ValidationError | 
     return True, 'tests passed'
 
 
-def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None) -> None:
+def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None, log_to_file_enabled: bool = False) -> None:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
@@ -860,11 +867,12 @@ def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None)
         callback_handler = CallbackLogHandler(extra_sink)
         logger.addHandler(callback_handler)
 
-    log_filename = f'photo-renamer_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.log'
-    log_file = os.path.join(target_log_path, log_filename) if target_log_path else log_filename
-    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter(LOGGER_FORMAT))
-    logger.addHandler(file_handler)
+    if log_to_file_enabled:
+        log_filename = f'photo-renamer_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.log'
+        log_file = os.path.join(target_log_path, log_filename) if target_log_path else log_filename
+        file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter(LOGGER_FORMAT))
+        logger.addHandler(file_handler)
 
 
 def print_version() -> None:
@@ -878,7 +886,7 @@ def execute(
     language: str = 'zh-CN',
 ) -> tuple[bool, RunStats | str]:
     apply_runtime_config(config)
-    init_logger(config.log_level, config.log_path, extra_sink=extra_sink)
+    init_logger(config.log_level, config.log_path, extra_sink=extra_sink, log_to_file_enabled=config.log_to_file)
 
     ok, err = test_func(config)
     if not ok:
@@ -907,6 +915,7 @@ class PhotoRenamerGUI:
         self.log_path_var = tk.StringVar(value=defaults.log_path)
         self.regex_offset_var = tk.StringVar(value=str(defaults.regex_offset))
         self.log_level_var = tk.StringVar(value=defaults.log_level)
+        self.log_to_file_var = tk.BooleanVar(value=defaults.log_to_file)
         self.recursion_var = tk.BooleanVar(value=defaults.recursion)
         self.preview_var = tk.BooleanVar(value=True)
         self.show_advanced_var = tk.BooleanVar(value=False)
@@ -1051,21 +1060,26 @@ class PhotoRenamerGUI:
         self.log_level_label.grid(row=0, column=3, sticky='w')
         ttk.Combobox(advanced, textvariable=self.log_level_var, values=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), state='readonly').grid(row=1, column=3, sticky='ew')
 
+        self.log_to_file_check = ttk.Checkbutton(
+            advanced,
+            text='',
+            variable=self.log_to_file_var,
+            command=self._update_log_file_controls,
+        )
+        self.log_to_file_check.grid(row=2, column=0, sticky='w', pady=(8, 0))
+
+        self.disable_regex_check = ttk.Checkbutton(advanced, text='', variable=self.disable_regex_var)
+        self.disable_regex_check.grid(row=2, column=1, sticky='w', pady=(8, 0))
+
+        self.force_rename_check = ttk.Checkbutton(advanced, text='', variable=self.force_rename_var)
+        self.force_rename_check.grid(row=2, column=2, columnspan=2, sticky='w', pady=(8, 0))
+
         self.log_dir_label = ttk.Label(advanced, text='')
-        self.log_dir_label.grid(row=2, column=0, sticky='w', pady=(8, 0))
-        ttk.Entry(advanced, textvariable=self.log_path_var).grid(row=3, column=0, columnspan=3, sticky='ew', padx=(0, 8))
+        self.log_dir_label.grid(row=3, column=0, sticky='w', pady=(8, 0))
+        self.log_dir_entry = ttk.Entry(advanced, textvariable=self.log_path_var)
+        self.log_dir_entry.grid(row=4, column=0, columnspan=3, sticky='ew', padx=(0, 8))
         self.log_dir_button = ttk.Button(advanced, text='', command=self._pick_log_dir, width=8)
-        self.log_dir_button.grid(row=3, column=3, sticky='w')
-
-        advanced_option_frame = ttk.Frame(advanced)
-        advanced_option_frame.grid(row=4, column=0, columnspan=4, sticky='ew', pady=(10, 0))
-        for column in range(2):
-            advanced_option_frame.columnconfigure(column, weight=1)
-
-        self.disable_regex_check = ttk.Checkbutton(advanced_option_frame, text='', variable=self.disable_regex_var)
-        self.disable_regex_check.grid(row=0, column=0, sticky='w')
-        self.force_rename_check = ttk.Checkbutton(advanced_option_frame, text='', variable=self.force_rename_var)
-        self.force_rename_check.grid(row=0, column=1, sticky='w')
+        self.log_dir_button.grid(row=4, column=3, sticky='w')
 
         self._apply_advanced_visibility()
 
@@ -1145,6 +1159,7 @@ class PhotoRenamerGUI:
         self.extension_filter_label.configure(text=self._text('extension_filter'))
         self.time_offset_label.configure(text=self._text('time_offset'))
         self.log_level_label.configure(text=self._text('log_level'))
+        self.log_to_file_check.configure(text=self._text('log_to_file'))
         self.log_dir_label.configure(text=self._text('log_dir'))
         self.log_dir_button.configure(text=self._text('browse'))
         self.recursion_check.configure(text=self._text('include_subdirs'))
@@ -1184,6 +1199,8 @@ class PhotoRenamerGUI:
 
         if not initial:
             self._append_log(self._text('language_switched'))
+
+        self._update_log_file_controls()
 
     def _on_language_changed(self, _event=None) -> None:
         selected_value = self.language_combo.get().split(' | ')[0].strip()
@@ -1338,6 +1355,13 @@ class PhotoRenamerGUI:
         if selected_dir:
             self.log_path_var.set(selected_dir)
 
+    def _update_log_file_controls(self) -> None:
+        enabled = self.log_to_file_var.get()
+        state = 'normal' if enabled else 'disabled'
+        self.log_dir_label.configure(foreground='' if enabled else '#9ca3af')
+        self.log_dir_entry.configure(state=state)
+        self.log_dir_button.configure(state=state)
+
     def _append_log(self, message: str) -> None:
         self.log_text.configure(state='normal')
         self.log_text.insert('end', message + '\n')
@@ -1388,6 +1412,7 @@ class PhotoRenamerGUI:
             extensions=self.extension_var.get().strip(),
             force_rename=self.force_rename_var.get(),
             log_level=self.log_level_var.get(),
+            log_to_file=self.log_to_file_var.get(),
             log_path=self.log_path_var.get().strip(),
             regex_offset=float(regex_offset_value),
             only_image=media_mode == 'image',
