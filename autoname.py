@@ -15,7 +15,7 @@ from hachoir.parser import createParser
 from loguru import logger
 
 # Define version
-Version = '0.4.0'
+Version = '0.4.1'
 
 # File Extension Definition
 Photos = ['.jpg', '.jpeg', '.heic', '.png', '.gif', '.nef']
