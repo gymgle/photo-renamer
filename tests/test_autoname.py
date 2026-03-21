@@ -1,12 +1,10 @@
 import os
-import io
-import subprocess
-import sys
 import tempfile
 import unittest
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import autoname
 
@@ -19,6 +17,11 @@ class AutonameTests(unittest.TestCase):
         autoname.disable_regex = False
         autoname.regex_offset = 0
         self.repo_root = os.path.dirname(os.path.dirname(__file__))
+
+    def _close_logger_handlers(self):
+        for handler in list(autoname.logger.handlers):
+            autoname.logger.removeHandler(handler)
+            handler.close()
 
     def test_resolve_target_path_avoids_multiple_conflicts(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -57,17 +60,6 @@ class AutonameTests(unittest.TestCase):
 
         self.assertEqual(fallback, datetime.fromtimestamp(100))
 
-    def test_only_image_and_only_video_are_mutually_exclusive(self):
-        parser = autoname.create_parser()
-        stderr = io.StringIO()
-
-        with patch('sys.stderr', stderr):
-            with self.assertRaises(SystemExit) as exc:
-                parser.parse_args(['-oi', '-ov'])
-
-        self.assertEqual(exc.exception.code, 2)
-        self.assertIn('not allowed with argument', stderr.getvalue())
-
     def test_datetime_from_filename_treats_three_digits_as_milliseconds(self):
         parsed = autoname.datetime_from_filename('20240316_101520666_iOS.heic')
 
@@ -104,61 +96,140 @@ class AutonameTests(unittest.TestCase):
             autoname.recursion = False
 
             with patch('autoname.rename_photo') as rename_photo, patch('autoname.rename_video') as rename_video:
-                result = autoname.auto_rename(tmp_dir)
+                stats = autoname.auto_rename(tmp_dir)
 
-            self.assertTrue(result)
-            rename_photo.assert_any_call(jpg_path)
-            rename_photo.assert_any_call(png_path)
+            self.assertEqual(stats.total_files, 2)
+            self.assertEqual(stats.processed_files, 2)
+            rename_photo.assert_any_call(jpg_path, ANY)
+            rename_photo.assert_any_call(png_path, ANY)
             self.assertEqual(rename_photo.call_count, 2)
             rename_video.assert_not_called()
 
-    def test_cli_rejects_conflicting_media_filters(self):
-        result = subprocess.run(
-            [sys.executable, os.path.join(self.repo_root, 'autoname.py'), '-oi', '-ov'],
-            capture_output=True,
-            text=True,
-            cwd=self.repo_root,
-        )
-
-        self.assertEqual(result.returncode, 2)
-        self.assertIn('not allowed with argument', result.stderr)
-
-    def test_cli_prints_version(self):
-        result = subprocess.run(
-            [sys.executable, os.path.join(self.repo_root, 'autoname.py'), '--version'],
-            capture_output=True,
-            text=True,
-            cwd=self.repo_root,
-        )
-
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), f'version {autoname.Version}')
-
-    def test_cli_preview_reports_rename_without_modifying_file(self):
+    def test_collect_media_files_respects_recursion_and_filters(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            source_path = os.path.join(tmp_dir, 'IMG_20240316_101520.jpg')
-            target_path = os.path.join(tmp_dir, '2024-03-16 10.15.20.jpg')
-            open(source_path, 'wb').close()
+            nested_dir = os.path.join(tmp_dir, 'nested')
+            os.mkdir(nested_dir)
+            open(os.path.join(tmp_dir, 'root.jpg'), 'wb').close()
+            open(os.path.join(nested_dir, 'child.mov'), 'wb').close()
+            open(os.path.join(nested_dir, 'ignore.txt'), 'wb').close()
 
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    os.path.join(self.repo_root, 'autoname.py'),
-                    '-d',
-                    tmp_dir,
-                    '-p',
-                    '-lp',
-                    tmp_dir,
-                ],
-                capture_output=True,
-                text=True,
-                cwd=self.repo_root,
-            )
+            config = autoname.RunConfig(dir_path=tmp_dir, recursion=True, only_image=False, only_video=False)
+            files, directories = autoname.collect_media_files(tmp_dir, config)
 
-            self.assertEqual(result.returncode, 0)
-            self.assertIn('IMG_20240316_101520.jpg -> 2024-03-16 10.15.20.jpg', result.stdout)
-            self.assertTrue(os.path.exists(source_path))
-            self.assertFalse(os.path.exists(target_path))
+        self.assertEqual(directories, 2)
+        self.assertEqual(len(files), 2)
+        self.assertTrue(any(path.endswith('root.jpg') for path in files))
+        self.assertTrue(any(path.endswith('child.mov') for path in files))
+
+    def test_auto_rename_collects_failures_in_stats(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jpg_path = os.path.join(tmp_dir, 'photo.jpg')
+            open(jpg_path, 'wb').close()
+
+            config = autoname.RunConfig(dir_path=tmp_dir)
+
+            with patch('autoname.rename_photo', side_effect=RuntimeError('broken metadata')):
+                stats = autoname.auto_rename(tmp_dir, config)
+
+        self.assertEqual(stats.total_files, 1)
+        self.assertEqual(stats.processed_files, 1)
+        self.assertEqual(stats.failed_files, 1)
+        self.assertEqual(len(stats.error_messages), 1)
+        self.assertIn('broken metadata', stats.error_messages[0])
+
+    def test_resolve_dropped_directory_supports_bytes_and_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample_file = os.path.join(tmp_dir, 'sample.jpg')
+            open(sample_file, 'wb').close()
+
+            resolved = autoname.resolve_dropped_directory([sample_file.encode()])
+
+        self.assertEqual(resolved, tmp_dir)
+
+    def test_format_stats_summary_includes_error_excerpt(self):
+        stats = autoname.RunStats(
+            total_files=3,
+            processed_files=3,
+            previewed_files=2,
+            failed_files=1,
+            directories_scanned=1,
+            error_messages=['photo.jpg: broken metadata'],
+        )
+
+        summary = autoname.format_stats_summary(stats, preview_mode=True)
+
+        self.assertIn('匹配文件: 3', summary)
+        self.assertIn('预览结果: 2', summary)
+        self.assertIn('photo.jpg: broken metadata', summary)
+
+    def test_format_stats_summary_supports_english(self):
+        stats = autoname.RunStats(
+            total_files=2,
+            processed_files=2,
+            renamed_files=1,
+            skipped_files=1,
+            directories_scanned=1,
+        )
+
+        summary = autoname.format_stats_summary(stats, preview_mode=False, language='en-US')
+
+        self.assertIn('Scanned folders: 1', summary)
+        self.assertIn('Matched files: 2', summary)
+        self.assertIn('Renamed: 1', summary)
+
+    def test_translate_falls_back_to_default_language(self):
+        translated = autoname.translate('fr-FR', 'run_button')
+
+        self.assertEqual(translated, '开始处理')
+
+    def test_translation_keys_match_between_languages(self):
+        zh_keys = set(autoname.TRANSLATIONS['zh-CN'])
+        en_keys = set(autoname.TRANSLATIONS['en-US'])
+
+        self.assertSetEqual(zh_keys, en_keys)
+
+    def test_mode_display_name_supports_english(self):
+        translated = autoname.mode_display_name('en-US', 'pro')
+
+        self.assertEqual(translated, 'Pro')
+
+    def test_localize_validation_message_supports_english(self):
+        translated = autoname.localize_validation_message('file path need to be specified with -d argument', 'en-US')
+
+        self.assertEqual(translated, 'Please choose a folder to process first.')
+
+    def test_init_logger_skips_missing_console_sink(self):
+        self._close_logger_handlers()
+
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+                patch.object(autoname.sys, 'stdout', None), \
+                patch.object(autoname.sys, 'stderr', None):
+            autoname.init_logger(target_log_path=tmp_dir, extra_sink=lambda message: None)
+
+            self.assertEqual(len(autoname.logger.handlers), 2)
+            self.assertTrue(any(isinstance(handler, autoname.CallbackLogHandler) for handler in autoname.logger.handlers))
+            self.assertTrue(any(isinstance(handler, RotatingFileHandler) for handler in autoname.logger.handlers))
+            self._close_logger_handlers()
+
+    def test_init_logger_emits_plain_messages_to_gui_sink(self):
+        emitted_messages = []
+
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+                patch.object(autoname.sys, 'stdout', None), \
+                patch.object(autoname.sys, 'stderr', None):
+            autoname.init_logger(target_log_path=tmp_dir, extra_sink=emitted_messages.append)
+            autoname.logger.info('Started processing...')
+
+            self.assertTrue(emitted_messages)
+            self.assertEqual(emitted_messages[-1], 'Started processing...')
+            self._close_logger_handlers()
+
+    def test_main_without_args_launches_gui(self):
+        with patch('autoname.launch_gui', return_value=0) as launch_gui:
+            result = autoname.main()
+
+        self.assertEqual(result, 0)
+        launch_gui.assert_called_once_with()
 
 
 if __name__ == '__main__':

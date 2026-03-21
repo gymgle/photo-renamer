@@ -14,106 +14,72 @@ If the target filename already exists, Autoname will keep the timestamp prefix a
 
 Download the latest release [here](https://github.com/gymgle/autoname/releases)
 
+Current builds are GUI-only:
+
+- Double-click the executable, or run `python autoname.py`, to open the app.
+- The app includes a progress bar, drag-and-drop folder selection on Windows, result statistics, and error summaries.
+- You can switch the interface language between Simplified Chinese and English in the top-right corner.
+
 #### Usage
 
-```shell
-usage: autoname [-h] [-d DIR] [-f FORMAT] [-r] [-p] [-dr] [-ext EXTENSION] [-fr] [-ll {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-lp LOG_PATH] [-ro REGEX_OFFSET] [-oi] [-ov] [-v]
+Desktop application:
 
-options:
-  -h, --help            show this help message and exit
-  -d, --dir DIR         path to the directory that needs renaming
-  -f, --format FORMAT   new name format in python datetime
-  -r, --recursion       recursively rename all files in the subdirectories
-  -p, --preview         preview new filenames without actually renaming them
-  -dr, --disable_regex  timestamp is extracted from the filename by default. Enable this option to skip filename regex extraction
-  -ext, --extension EXTENSION
-                        only rename files in specified extensions, separate extensions with a comma, e.g. "jpg,png,mov" or "jpg, png"
-  -fr, --force_rename   force rename even if the filename is already in the desired format
-  -ll, --loglevel {DEBUG,INFO,WARNING,ERROR,CRITICAL}
-                        set log level, default: INFO, options: DEBUG, WARNING, ERROR, CRITICAL
-  -lp, --log_path LOG_PATH
-                        log file path, default: current directory
-  -ro, --regex_offset REGEX_OFFSET
-                        offset in hours when using regex from filename, e.g. 8 for UTC+8 if filename timezone is UTC
-  -oi, --only-image     rename only for image files
-  -ov, --only-video     rename only for video files
-  -v, --version         show version
+```shell
+python autoname.py
+autoname.exe
 ```
 
-`--only-image` and `--only-video` are mutually exclusive and cannot be used together.
+The app puts all options in the window, so you do not need to remember commands.
 
-#### How it works?
+What you can do in the window:
+
+- Choose the folder to process.
+- Preview the new names before changing anything.
+- Limit processing to photos, videos, or specific file formats.
+- Include subfolders.
+- See progress, current file, results, and errors in real time.
+
+Windows drag-and-drop:
+
+- Drag a folder into the window to fill the folder box.
+- Dragging a file also works. The app will use the file's folder.
+
+#### How it works
 
 ![Flowchat](./assets/flowchart.drawio.svg)
 
-Timestamp priority:
+Autoname chooses a time in this order:
 
-1. Timestamp extracted from filename, unless `--disable_regex` is used.
+1. Time found in the file name, unless you turn that option off.
 2. Photo EXIF `DateTimeOriginal`.
 3. Video metadata `Creation date`.
-4. Filesystem fallback timestamps.
+4. File system time.
 
-Filename timestamp notes:
+Notes about reading time from file names:
 
-- Supports values such as `IMG_20240316_101520.jpg`, `VID_20240316_101520.mp4`, and `20240316_101520666_iOS.heic`.
-- A 3-digit fractional part in the filename is treated as milliseconds.
-- `--regex_offset` is applied only when the filename timestamp path is used.
+- Supports names such as `IMG_20240316_101520.jpg`, `VID_20240316_101520.mp4`, and `20240316_101520666_iOS.heic`.
+- A 3-digit fraction in the file name is treated as milliseconds.
+- “文件名时间偏移” only affects time read from the file name.
 
-Preview mode notes:
+Preview mode:
 
-- `--preview` prints the planned rename result without modifying files on disk.
-- Preview output still follows the same collision-resolution rules as an actual rename.
+- When you enable preview, the app shows what will be renamed without changing files.
+- Preview uses the same duplicate-name handling as the real rename process.
 
-#### Examples
+#### Common usage
 
-1. Preview new filenames for photos and videos in directory `D:\Photos\2025`.
-   ```shell
-   autoname -d D:\Photos\2025 -p
-   ```
-
-2. Rename photos and videos with the timezone offset of 8 hours when using regex from filename.
-   ```shell
-   autoname -ro 8 -d D:\Photos\2025
-   autoname --regex_offset 8 -d D:\Photos\2025
-   ```
-
-3. Disable regex from filename, this will use EXIF data for first priority.
-   ```shell
-   autoname -dr -d D:\Photos\2025
-   autoname --disable_regex -d D:\Photos\2025
-   ```
-
-4. Force to rename even if the filename is already in the desired format.
-   ```shell
-   autoname -fr -d D:\Photos\2025
-   autoname --force_rename -d D:\Photos\2025
-   ```
-
-5. Force to rename and disable regex from filename. If the filename already starts with the desired format, but the datetime is not correct, use this option combination to correct it.
-   ```shell
-   autoname -fr -dr -d D:\Photos\2025
-   autoname --force_rename --disable_regex -d D:\Photos\2025
-   ```
-
-6. Rename only Photo files.
-   ```shell
-   autoname -oi -d D:\Photos\2025
-   autoname --only-image -d D:\Photos\2025
-   ```
-
-7. Rename only specific extensions.
-   ```shell
-   autoname -ext heic,mov -d D:\Photos\2025
-   autoname -ext "jpg, png" -d D:\Photos\2025
-   autoname -ext ".jpg, .png" -d D:\Photos\2025
-   autoname --extension heic,mov -d D:\Photos\2025
-   ```
-
-8. Recursively rename files in all the subdirectories.
-   ```shell
-   autoname -r -d D:\Photos
-   autoname --recursion -d D:\Photos
-   ```
+1. First use:
+    Open the app, choose your folder, keep “先预览，不改文件” checked, and review the results.
+2. If times in file names are in UTC:
+    Set “文件名时间偏移” to `8` or another offset that matches your local time.
+3. If you only want photos:
+    Change “处理范围” to “仅图片”.
+4. If you only want some formats:
+    Enter values like `jpg, png` or `heic, mov` in “只处理这些格式”.
+5. If you want subfolders too:
+    Enable “包含子文件夹”.
+6. If you are sure the preview looks right:
+    Turn off “先预览，不改文件” and run again to rename files for real.
 
 ### As Developers
 
@@ -147,7 +113,7 @@ Build Windows/Linux/macOS executable binary file via PyInstaller.
 
 3. Build python script to executable binary file
     ```shell
-    $ pyinstaller -F -i ./assets/icon.ico autoname.py
+    $ pyinstaller -F -w -i ./assets/icon.ico autoname.py
     ```
 
 You can find the packaged `autoname` in `dist` dir.
