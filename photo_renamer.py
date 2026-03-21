@@ -100,7 +100,7 @@ TRANSLATIONS = {
         'metric_skipped': '跳过',
         'metric_failed': '失败',
         'log_frame': '处理记录',
-        'footer_tip': '建议先勾选“先预览，不改文件”，确认结果后再正式执行。',
+        'footer_tip': '💡 建议先勾选“先预览，不改文件”，确认结果后再正式执行。',
         'run_button': '开始处理',
         'run_button_running': '处理中...',
         'drop_hint_no_dnd': '可以点击“浏览”选择文件夹。安装 windnd 后也可以直接拖进窗口。',
@@ -172,7 +172,7 @@ TRANSLATIONS = {
         'metric_skipped': 'Skipped',
         'metric_failed': 'Failed',
         'log_frame': 'Activity log',
-        'footer_tip': 'It is safer to keep “Preview only, do not rename” enabled first, then run again for real after checking the result.',
+        'footer_tip': '💡 It is safer to keep “Preview only, do not rename” enabled first, then run again for real after checking the result.',
         'run_button': 'Start',
         'run_button_running': 'Processing...',
         'drop_hint_no_dnd': 'Click Browse to choose a folder. If windnd is installed, you can also drag files or folders into the window.',
@@ -183,9 +183,9 @@ TRANSLATIONS = {
         'progress_scanning': 'Started. Looking for files...',
         'progress_none': 'No photo or video matched the current filters',
         'progress_done': 'Completed: {processed}/{total}',
-        'progress_running': 'Working: {processed}/{total}',
+        'progress_running': 'Processing: {processed}/{total}',
         'current_file': 'Current file: {name}',
-        'dialog_busy_title': 'Working',
+        'dialog_busy_title': 'Processing',
         'dialog_busy_message': 'The current job is still running. Please wait.',
         'dialog_input_title': 'Invalid input',
         'dialog_offset_error': '“Filename time offset” must be a number.',
@@ -744,6 +744,7 @@ def execute(
     config: RunConfig,
     extra_sink=None,
     progress_callback: Callable[[RunStats], None] | None = None,
+    language: str = 'zh-CN',
 ) -> tuple[bool, RunStats | str]:
     apply_runtime_config(config)
     init_logger(config.log_level, config.log_path, extra_sink=extra_sink)
@@ -754,7 +755,7 @@ def execute(
         return False, err
 
     stats = auto_rename(config.dir_path, config, progress_callback=progress_callback)
-    logger.info('task summary:\n' + format_stats_summary(stats, config.preview))
+    logger.info('task summary:\n' + format_stats_summary(stats, config.preview, language=language))
     return True, stats
 
 
@@ -1226,7 +1227,7 @@ class PhotoRenamerGUI:
 
     def _run_job(self, config: RunConfig) -> None:
         try:
-            success, result = execute(config, extra_sink=self._emit_log, progress_callback=self._emit_progress)
+            success, result = execute(config, extra_sink=self._emit_log, progress_callback=self._emit_progress, language=self.language_var.get())
             if success and isinstance(result, RunStats):
                 self._queue_event('progress', result)
                 summary_message = format_stats_summary(result, config.preview, language=self.language_var.get())
