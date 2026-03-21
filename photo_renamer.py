@@ -72,8 +72,8 @@ TRANSLATIONS = {
     'zh-CN': {
         'app_tagline': '根据拍摄时间重命名你的照片和视频',
         'mode_label': '界面模式',
-        'mode_simple': '简洁模式',
-        'mode_pro': '专业模式',
+        'mode_simple': '简洁',
+        'mode_pro': '专业',
         'language_label': '界面语言',
         'about_button': '关于',
         'settings_frame': '处理设置',
@@ -1222,14 +1222,15 @@ class PhotoRenamerGUI:
         if wait:
             self.root.wait_window(dialog)
 
-    def _show_message_dialog(self, title: str, message: str) -> None:
+    def _show_message_dialog(self, title: str, message: str, min_width: int = 200) -> None:
         dialog = self._create_modal_dialog(title)
-        wraplength = self._dialog_wraplength(message)
+        dialog.minsize(min_width, 1)
+        wraplength = self._dialog_wraplength(message, min_width=min_width)
 
         content = ttk.Frame(dialog, padding=16)
         content.pack(fill='both', expand=True)
 
-        ttk.Label(content, text=message, wraplength=wraplength, justify='left').pack(anchor='w')
+        ttk.Label(content, text=message, wraplength=wraplength, justify='left').pack(anchor='w', fill='x')
 
         actions = ttk.Frame(content)
         actions.pack(fill='x', pady=(12, 0))

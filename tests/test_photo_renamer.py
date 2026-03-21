@@ -391,6 +391,16 @@ class PhotoRenamerTests(unittest.TestCase):
         self.assertEqual(short_wrap, 280)
         self.assertEqual(long_wrap, 560)
 
+    def test_dialog_wraplength_uses_custom_min_width(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        fake_font = Mock()
+        fake_font.measure.side_effect = lambda text: len(text) * 10
+
+        with patch('photo_renamer.tkfont.nametofont', return_value=fake_font):
+            wrap = gui._dialog_wraplength('done', min_width=420)
+
+        self.assertEqual(wrap, 420)
+
     def test_show_input_error_uses_custom_modal_dialog(self):
         gui = object.__new__(photo_renamer.PhotoRenamerGUI)
         gui._append_log = Mock()
@@ -401,6 +411,26 @@ class PhotoRenamerTests(unittest.TestCase):
 
         gui._append_log.assert_called_once_with('Invalid input: Bad value')
         gui._show_message_dialog.assert_called_once_with('Invalid input', 'Bad value')
+
+    def test_show_message_dialog_applies_dialog_min_width(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        dialog = Mock()
+        ok_button = Mock()
+        content = Mock()
+        actions = Mock()
+        gui._create_modal_dialog = Mock(return_value=dialog)
+        gui._dialog_wraplength = Mock(return_value=420)
+        gui._present_modal_dialog = Mock()
+
+        with patch('photo_renamer.ttk.Frame', side_effect=[content, actions]), \
+                patch('photo_renamer.ttk.Label') as mock_label, \
+                patch('photo_renamer.ttk.Button', return_value=ok_button):
+            gui._show_message_dialog('Finished', 'Summary', min_width=420)
+
+        dialog.minsize.assert_called_once_with(420, 1)
+        gui._dialog_wraplength.assert_called_once_with('Summary', min_width=420)
+        mock_label.return_value.pack.assert_called_once_with(anchor='w', fill='x')
+        gui._present_modal_dialog.assert_called_once_with(dialog, focus_widget=ok_button, wait=True)
 
     def test_start_job_uses_custom_modal_dialog_when_busy(self):
         gui = object.__new__(photo_renamer.PhotoRenamerGUI)
