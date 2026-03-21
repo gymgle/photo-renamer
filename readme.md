@@ -1,12 +1,17 @@
 # photo-renamer
 
-photo-renamer is a tool that renames files based on the EXIF `DateTimeOriginal` metadata of photos and video metadata timestamps. If the media files do not contain embedded metadata, it will fall back to filesystem timestamps for renaming.
+photo-renamer is a desktop GUI tool that renames photos and videos by capture time.
 
-If the filename contains a usable timestamp, it will take priority over other methods and be used for renaming.
+It uses the first available time source in this order:
 
-If the target filename already exists, photo-renamer will keep the timestamp prefix and append the original filename, and if needed, add a numeric suffix to avoid collisions.
+1. A usable timestamp found in the file name, unless that option is disabled.
+2. Photo EXIF `DateTimeOriginal`.
+3. Video metadata `Creation date`.
+4. Filesystem timestamps.
 
-`python 3.11+`
+If the target filename already exists, photo-renamer keeps the timestamp prefix, appends the original filename, and adds a numeric suffix if needed to avoid collisions.
+
+`python 3.14`
 
 ## Getting Started
 
@@ -17,27 +22,33 @@ Download the latest release [here](https://github.com/gymgle/photo-renamer/relea
 Current builds are GUI-only:
 
 - Double-click the executable, or run `python photo_renamer.py`, to open the app.
-- The app includes a progress bar, drag-and-drop folder selection on Windows, result statistics, and error summaries.
+- The app includes Simple and Pro modes, a progress bar, result statistics, and error summaries.
 - You can switch the interface language between Simplified Chinese and English in the top-right corner.
+- On Windows, if `windnd` is available, you can drag folders or files into the window.
+- You can optionally save logs to a file and open the log folder from the app after a run.
 
 #### Usage
 
-Desktop application:
-
-```shell
-python photo_renamer.py
-photo-renamer.exe
-```
+Double-click the executable or run `python photo_renamer.py` to open the app.
 
 The app puts all options in the window, so you do not need to remember commands.
 
 What you can do in the window:
 
 - Choose the folder to process.
+- Choose a custom filename format.
 - Preview the new names before changing anything.
 - Limit processing to photos, videos, or specific file formats.
 - Include subfolders.
+- Turn off filename timestamp detection when needed.
+- Force files to be renamed again even if the name already looks correct.
+- Save logs to a file, using either a selected log folder or the current working folder.
 - See progress, current file, results, and errors in real time.
+
+Supported formats:
+
+- Photos: `jpg`, `jpeg`, `heic`, `png`, `gif`, `nef`
+- Videos: `mp4`, `mov`
 
 Windows drag-and-drop:
 
@@ -59,27 +70,35 @@ Notes about reading time from file names:
 
 - Supports names such as `IMG_20240316_101520.jpg`, `VID_20240316_101520.mp4`, and `20240316_101520666_iOS.heic`.
 - A 3-digit fraction in the file name is treated as milliseconds.
-- “文件名时间偏移” only affects time read from the file name.
+- “File name offset” only affects time read from the file name.
 
 Preview mode:
 
 - When you enable preview, the app shows what will be renamed without changing files.
 - Preview uses the same duplicate-name handling as the real rename process.
 
+Logging:
+
+- You can enable file logging from the window.
+- If you do not select a log folder, the log file is created in the current working folder.
+- After a run finishes, you can use the `Open Log Folder` button to open the folder that contains the latest log file.
+
 #### Common usage
 
 1. First use:
-    Open the app, choose your folder, keep “先预览，不改文件” checked, and review the results.
+    Open the app, choose your folder, keep Preview enabled, and review the results.
 2. If times in file names are in UTC:
-    Set “文件名时间偏移” to `8` or another offset that matches your local time.
+    Set the filename time offset to `8` or another offset that matches your local time.
 3. If you only want photos:
-    Change “处理范围” to “仅图片”.
+    Change the scope to Images only.
 4. If you only want some formats:
-    Enter values like `jpg, png` or `heic, mov` in “只处理这些格式”.
+    Enter values like `jpg, png` or `heic, mov` in the extension filter.
 5. If you want subfolders too:
-    Enable “包含子文件夹”.
+    Enable Include subfolders.
 6. If you are sure the preview looks right:
-    Turn off “先预览，不改文件” and run again to rename files for real.
+    Turn off Preview only and run again to rename files for real.
+7. If some files already start with a timestamp but you still want to rename them:
+    Enable Force rename.
 
 ### As Developers
 
@@ -91,11 +110,15 @@ $ git clone https://github.com/gymgle/photo-renamer.git
 $ cd photo-renamer
 $ pip3 install -r requirements.txt
 
-# 3. Try it!
+# 3. Try it.
 $ python photo_renamer.py
 ```
 
-Please **DO NOT** use `exifread 3.0.0` due to `exifread.heic.NoParser: hdlr` issue.
+Notes:
+
+- `windnd` is only used on Windows for drag-and-drop support.
+- Please do not use `ExifRead 3.0.0` due to `exifread.heic.NoParser: hdlr`.
+
 Details: https://github.com/ianare/exif-py/issues/184
 
 ### How to Build?
