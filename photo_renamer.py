@@ -41,7 +41,7 @@ SUPPORTED_MEDIA = set(Photos + Videos)
 
 LOGGER_FORMAT = '%(levelname)s | %(message)s'
 
-logger = logging.getLogger('autoname')
+logger = logging.getLogger('photo-renamer')
 logger.propagate = False
 
 
@@ -59,8 +59,8 @@ LANGUAGE_OPTIONS = {
 }
 
 APP_DISPLAY_NAMES = {
-    'zh-CN': '照片重命名助手',
-    'en-US': 'Media Rename Helper',
+    'zh-CN': 'photo-renamer',
+    'en-US': 'photo-renamer',
 }
 
 UI_MODE_OPTIONS = ('simple', 'pro')
@@ -102,6 +102,7 @@ TRANSLATIONS = {
         'log_frame': '处理记录',
         'footer_tip': '建议先勾选“先预览，不改文件”，确认结果后再正式执行。',
         'run_button': '开始处理',
+        'run_button_running': '处理中...',
         'drop_hint_no_dnd': '可以点击“浏览”选择文件夹。安装 windnd 后也可以直接拖进窗口。',
         'drop_hint_dnd': '可以把文件夹或文件直接拖到窗口中，拖入文件时会自动使用它所在的文件夹。',
         'select_target_dir': '选择要处理的文件夹',
@@ -173,6 +174,7 @@ TRANSLATIONS = {
         'log_frame': 'Activity log',
         'footer_tip': 'It is safer to keep “Preview only, do not rename” enabled first, then run again for real after checking the result.',
         'run_button': 'Start',
+        'run_button_running': 'Processing...',
         'drop_hint_no_dnd': 'Click Browse to choose a folder. If windnd is installed, you can also drag files or folders into the window.',
         'drop_hint_dnd': 'Drag a folder or file into the window. If you drop a file, its parent folder will be used.',
         'select_target_dir': 'Choose a folder to process',
@@ -727,7 +729,7 @@ def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None)
         callback_handler = CallbackLogHandler(extra_sink)
         logger.addHandler(callback_handler)
 
-    log_filename = f'autoname_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.log'
+    log_filename = f'photo-renamer_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.log'
     log_file = os.path.join(target_log_path, log_filename) if target_log_path else log_filename
     file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
     file_handler.setFormatter(logging.Formatter(LOGGER_FORMAT))
@@ -756,7 +758,7 @@ def execute(
     return True, stats
 
 
-class AutonameGUI:
+class PhotoRenamerGUI:
     def __init__(self, root):
         self.root = root
         self.root.geometry('740x640')
@@ -794,6 +796,7 @@ class AutonameGUI:
         self.failed_var = tk.StringVar(value='0')
         self.last_run_config = defaults
         self.last_stats: RunStats | None = None
+        self.job_running = False
 
         self.preview_var.trace_add('write', self._on_preview_mode_toggled)
 
@@ -973,9 +976,13 @@ class AutonameGUI:
         ttk.Label(metric, textvariable=variable, font=('Segoe UI', 12, 'bold')).pack(anchor='w')
         return title_label
 
+    def _refresh_run_button(self) -> None:
+        button_key = 'run_button_running' if self.job_running else 'run_button'
+        self.run_button.configure(text=self._text(button_key), state='disabled' if self.job_running else 'normal')
+
     def _apply_language(self, initial: bool = False) -> None:
         app_name = app_display_name(self.language_var.get())
-        self.root.title(f'{app_name} {Version}')
+        self.root.title(f'{app_name} v{Version}')
         self.subtitle_label.configure(text=self._text('app_tagline'))
         self.mode_label.configure(text=self._text('mode_label'))
         self.mode_combo.configure(values=[mode_display_name(self.language_var.get(), mode) for mode in UI_MODE_OPTIONS])
@@ -1018,7 +1025,7 @@ class AutonameGUI:
 
         self.output_frame.configure(text=self._text('log_frame'))
         self.footer_label.configure(text=self._text('footer_tip'))
-        self.run_button.configure(text=self._text('run_button'))
+        self._refresh_run_button()
 
         if windnd is None:
             self.drop_hint_var.set(self._text('drop_hint_no_dnd'))
@@ -1108,6 +1115,15 @@ class AutonameGUI:
         self.log_text.see('end')
         self.log_text.configure(state='disabled')
 
+    def _clear_log_output(self) -> None:
+        self.log_text.configure(state='normal')
+        self.log_text.delete('1.0', 'end')
+        self.log_text.configure(state='disabled')
+
+    def _show_input_error(self, message: str) -> None:
+        self._append_log(f'{self._text("dialog_input_title")}: {message}')
+        messagebox.showerror(self._text('dialog_input_title'), message)
+
     def _queue_event(self, kind: str, payload: Any) -> None:
         self.event_queue.put((kind, payload))
 
@@ -1186,23 +1202,23 @@ class AutonameGUI:
             messagebox.showinfo(self._text('dialog_busy_title'), self._text('dialog_busy_message'))
             return
 
+        self._clear_log_output()
+
         try:
             config = self._build_config()
         except ValueError:
-            messagebox.showerror(self._text('dialog_input_title'), self._text('dialog_offset_error'))
+            self._show_input_error(self._text('dialog_offset_error'))
             return
 
         ok, err = test_func(config)
         if not ok:
-            messagebox.showerror(self._text('dialog_input_title'), localize_validation_message(err, self.language_var.get()))
+            self._show_input_error(localize_validation_message(err, self.language_var.get()))
             return
 
         self.last_run_config = config
-        self.log_text.configure(state='normal')
-        self.log_text.delete('1.0', 'end')
-        self.log_text.configure(state='disabled')
         self._reset_progress_view(show_scanning=True)
-        self.run_button.configure(state='disabled')
+        self.job_running = True
+        self._refresh_run_button()
         self._append_log(self._text('log_start'))
 
         self.worker = Thread(target=self._run_job, args=(config,), daemon=True)
@@ -1221,7 +1237,11 @@ class AutonameGUI:
             self._queue_event('log', f'未处理异常: {exc}')
             self.root.after(0, lambda: messagebox.showerror(self._text('dialog_failed_title'), str(exc)))
         finally:
-            self.root.after(0, lambda: self.run_button.configure(state='normal'))
+            self.root.after(0, self._finish_job)
+
+    def _finish_job(self) -> None:
+        self.job_running = False
+        self._refresh_run_button()
 
 
 def launch_gui() -> int:
@@ -1236,7 +1256,7 @@ def launch_gui() -> int:
             root.iconbitmap(icon_path)
         except Exception:
             pass
-    AutonameGUI(root)
+    PhotoRenamerGUI(root)
     root.mainloop()
     return 0
 

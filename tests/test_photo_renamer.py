@@ -6,21 +6,21 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
-import autoname
+import photo_renamer
 
 
-class AutonameTests(unittest.TestCase):
+class PhotoRenamerTests(unittest.TestCase):
     def setUp(self):
-        autoname.date_format = '%Y-%m-%d %H.%M.%S'
-        autoname.preview = False
-        autoname.force_rename = False
-        autoname.disable_regex = False
-        autoname.regex_offset = 0
+        photo_renamer.date_format = '%Y-%m-%d %H.%M.%S'
+        photo_renamer.preview = False
+        photo_renamer.force_rename = False
+        photo_renamer.disable_regex = False
+        photo_renamer.regex_offset = 0
         self.repo_root = os.path.dirname(os.path.dirname(__file__))
 
     def _close_logger_handlers(self):
-        for handler in list(autoname.logger.handlers):
-            autoname.logger.removeHandler(handler)
+        for handler in list(photo_renamer.logger.handlers):
+            photo_renamer.logger.removeHandler(handler)
             handler.close()
 
     def test_resolve_target_path_avoids_multiple_conflicts(self):
@@ -30,7 +30,7 @@ class AutonameTests(unittest.TestCase):
             open(os.path.join(tmp_dir, '2024-03-16 10.15.20.jpg'), 'wb').close()
             open(os.path.join(tmp_dir, '2024-03-16 10.15.20_IMG_20240316_101520.jpg'), 'wb').close()
 
-            new_path = autoname.resolve_target_path(source_path, '2024-03-16 10.15.20')
+            new_path = photo_renamer.resolve_target_path(source_path, '2024-03-16 10.15.20')
 
             self.assertEqual(
                 new_path,
@@ -42,9 +42,9 @@ class AutonameTests(unittest.TestCase):
             source_path = os.path.join(tmp_dir, '2024-03-16 10.15.20_IMG_1.jpg')
             open(source_path, 'wb').close()
 
-            autoname.force_rename = True
+            photo_renamer.force_rename = True
 
-            result = autoname.rename_with_datetime(source_path, datetime(2024, 3, 17, 10, 15, 20))
+            result = photo_renamer.rename_with_datetime(source_path, datetime(2024, 3, 17, 10, 15, 20))
 
             self.assertTrue(result)
             self.assertFalse(os.path.exists(source_path))
@@ -53,30 +53,30 @@ class AutonameTests(unittest.TestCase):
     def test_linux_fallback_uses_mtime_instead_of_ctime(self):
         fake_stat = SimpleNamespace(st_ctime=500, st_mtime=100)
 
-        with patch('autoname.os.stat', return_value=fake_stat), \
-                patch('autoname.platform.system', return_value='Linux'), \
-                patch('autoname.datetime_from_filename', return_value=None):
-            fallback = autoname.get_fallback_datetime('/tmp/example.mp4')
+        with patch('photo_renamer.os.stat', return_value=fake_stat), \
+                patch('photo_renamer.platform.system', return_value='Linux'), \
+                patch('photo_renamer.datetime_from_filename', return_value=None):
+            fallback = photo_renamer.get_fallback_datetime('/tmp/example.mp4')
 
         self.assertEqual(fallback, datetime.fromtimestamp(100))
 
     def test_datetime_from_filename_treats_three_digits_as_milliseconds(self):
-        parsed = autoname.datetime_from_filename('20240316_101520666_iOS.heic')
+        parsed = photo_renamer.datetime_from_filename('20240316_101520666_iOS.heic')
 
         self.assertEqual(parsed, datetime(2024, 3, 16, 10, 15, 20, 666000))
 
     def test_parse_extensions_supports_spaces_and_dots(self):
-        parsed = autoname.parse_extensions('jpg, png, .MOV ,, heic')
+        parsed = photo_renamer.parse_extensions('jpg, png, .MOV ,, heic')
 
         self.assertEqual(parsed, ['.jpg', '.png', '.mov', '.heic'])
 
     def test_test_func_accepts_extensions_with_spaces(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            autoname.dir_path = tmp_dir
-            autoname.log_path = ''
-            autoname.extensions = 'jpg, png'
+            photo_renamer.dir_path = tmp_dir
+            photo_renamer.log_path = ''
+            photo_renamer.extensions = 'jpg, png'
 
-            ok, err = autoname.test_func()
+            ok, err = photo_renamer.test_func()
 
         self.assertTrue(ok)
         self.assertEqual(err, 'tests passed')
@@ -90,13 +90,13 @@ class AutonameTests(unittest.TestCase):
             open(png_path, 'wb').close()
             open(mov_path, 'wb').close()
 
-            autoname.extensions = 'jpg, png'
-            autoname.only_image = False
-            autoname.only_video = False
-            autoname.recursion = False
+            photo_renamer.extensions = 'jpg, png'
+            photo_renamer.only_image = False
+            photo_renamer.only_video = False
+            photo_renamer.recursion = False
 
-            with patch('autoname.rename_photo') as rename_photo, patch('autoname.rename_video') as rename_video:
-                stats = autoname.auto_rename(tmp_dir)
+            with patch('photo_renamer.rename_photo') as rename_photo, patch('photo_renamer.rename_video') as rename_video:
+                stats = photo_renamer.auto_rename(tmp_dir)
 
             self.assertEqual(stats.total_files, 2)
             self.assertEqual(stats.processed_files, 2)
@@ -113,8 +113,8 @@ class AutonameTests(unittest.TestCase):
             open(os.path.join(nested_dir, 'child.mov'), 'wb').close()
             open(os.path.join(nested_dir, 'ignore.txt'), 'wb').close()
 
-            config = autoname.RunConfig(dir_path=tmp_dir, recursion=True, only_image=False, only_video=False)
-            files, directories = autoname.collect_media_files(tmp_dir, config)
+            config = photo_renamer.RunConfig(dir_path=tmp_dir, recursion=True, only_image=False, only_video=False)
+            files, directories = photo_renamer.collect_media_files(tmp_dir, config)
 
         self.assertEqual(directories, 2)
         self.assertEqual(len(files), 2)
@@ -126,10 +126,10 @@ class AutonameTests(unittest.TestCase):
             jpg_path = os.path.join(tmp_dir, 'photo.jpg')
             open(jpg_path, 'wb').close()
 
-            config = autoname.RunConfig(dir_path=tmp_dir)
+            config = photo_renamer.RunConfig(dir_path=tmp_dir)
 
-            with patch('autoname.rename_photo', side_effect=RuntimeError('broken metadata')):
-                stats = autoname.auto_rename(tmp_dir, config)
+            with patch('photo_renamer.rename_photo', side_effect=RuntimeError('broken metadata')):
+                stats = photo_renamer.auto_rename(tmp_dir, config)
 
         self.assertEqual(stats.total_files, 1)
         self.assertEqual(stats.processed_files, 1)
@@ -142,12 +142,12 @@ class AutonameTests(unittest.TestCase):
             sample_file = os.path.join(tmp_dir, 'sample.jpg')
             open(sample_file, 'wb').close()
 
-            resolved = autoname.resolve_dropped_directory([sample_file.encode()])
+            resolved = photo_renamer.resolve_dropped_directory([sample_file.encode()])
 
         self.assertEqual(resolved, tmp_dir)
 
     def test_format_stats_summary_includes_error_excerpt(self):
-        stats = autoname.RunStats(
+        stats = photo_renamer.RunStats(
             total_files=3,
             processed_files=3,
             previewed_files=2,
@@ -156,14 +156,14 @@ class AutonameTests(unittest.TestCase):
             error_messages=['photo.jpg: broken metadata'],
         )
 
-        summary = autoname.format_stats_summary(stats, preview_mode=True)
+        summary = photo_renamer.format_stats_summary(stats, preview_mode=True)
 
         self.assertIn('匹配文件: 3', summary)
         self.assertIn('预览结果: 2', summary)
         self.assertIn('photo.jpg: broken metadata', summary)
 
     def test_format_stats_summary_supports_english(self):
-        stats = autoname.RunStats(
+        stats = photo_renamer.RunStats(
             total_files=2,
             processed_files=2,
             renamed_files=1,
@@ -171,30 +171,30 @@ class AutonameTests(unittest.TestCase):
             directories_scanned=1,
         )
 
-        summary = autoname.format_stats_summary(stats, preview_mode=False, language='en-US')
+        summary = photo_renamer.format_stats_summary(stats, preview_mode=False, language='en-US')
 
         self.assertIn('Scanned folders: 1', summary)
         self.assertIn('Matched files: 2', summary)
         self.assertIn('Renamed: 1', summary)
 
     def test_translate_falls_back_to_default_language(self):
-        translated = autoname.translate('fr-FR', 'run_button')
+        translated = photo_renamer.translate('fr-FR', 'run_button')
 
         self.assertEqual(translated, '开始处理')
 
     def test_translation_keys_match_between_languages(self):
-        zh_keys = set(autoname.TRANSLATIONS['zh-CN'])
-        en_keys = set(autoname.TRANSLATIONS['en-US'])
+        zh_keys = set(photo_renamer.TRANSLATIONS['zh-CN'])
+        en_keys = set(photo_renamer.TRANSLATIONS['en-US'])
 
         self.assertSetEqual(zh_keys, en_keys)
 
     def test_mode_display_name_supports_english(self):
-        translated = autoname.mode_display_name('en-US', 'pro')
+        translated = photo_renamer.mode_display_name('en-US', 'pro')
 
         self.assertEqual(translated, 'Pro')
 
     def test_localize_validation_message_supports_english(self):
-        translated = autoname.localize_validation_message('file path need to be specified with -d argument', 'en-US')
+        translated = photo_renamer.localize_validation_message('file path need to be specified with -d argument', 'en-US')
 
         self.assertEqual(translated, 'Please choose a folder to process first.')
 
@@ -202,31 +202,31 @@ class AutonameTests(unittest.TestCase):
         self._close_logger_handlers()
 
         with tempfile.TemporaryDirectory() as tmp_dir, \
-                patch.object(autoname.sys, 'stdout', None), \
-                patch.object(autoname.sys, 'stderr', None):
-            autoname.init_logger(target_log_path=tmp_dir, extra_sink=lambda message: None)
+                patch.object(photo_renamer.sys, 'stdout', None), \
+                patch.object(photo_renamer.sys, 'stderr', None):
+            photo_renamer.init_logger(target_log_path=tmp_dir, extra_sink=lambda message: None)
 
-            self.assertEqual(len(autoname.logger.handlers), 2)
-            self.assertTrue(any(isinstance(handler, autoname.CallbackLogHandler) for handler in autoname.logger.handlers))
-            self.assertTrue(any(isinstance(handler, RotatingFileHandler) for handler in autoname.logger.handlers))
+            self.assertEqual(len(photo_renamer.logger.handlers), 2)
+            self.assertTrue(any(isinstance(handler, photo_renamer.CallbackLogHandler) for handler in photo_renamer.logger.handlers))
+            self.assertTrue(any(isinstance(handler, RotatingFileHandler) for handler in photo_renamer.logger.handlers))
             self._close_logger_handlers()
 
     def test_init_logger_emits_plain_messages_to_gui_sink(self):
         emitted_messages = []
 
         with tempfile.TemporaryDirectory() as tmp_dir, \
-                patch.object(autoname.sys, 'stdout', None), \
-                patch.object(autoname.sys, 'stderr', None):
-            autoname.init_logger(target_log_path=tmp_dir, extra_sink=emitted_messages.append)
-            autoname.logger.info('Started processing...')
+                patch.object(photo_renamer.sys, 'stdout', None), \
+                patch.object(photo_renamer.sys, 'stderr', None):
+            photo_renamer.init_logger(target_log_path=tmp_dir, extra_sink=emitted_messages.append)
+            photo_renamer.logger.info('Started processing...')
 
             self.assertTrue(emitted_messages)
             self.assertEqual(emitted_messages[-1], 'Started processing...')
             self._close_logger_handlers()
 
     def test_main_without_args_launches_gui(self):
-        with patch('autoname.launch_gui', return_value=0) as launch_gui:
-            result = autoname.main()
+        with patch('photo_renamer.launch_gui', return_value=0) as launch_gui:
+            result = photo_renamer.main()
 
         self.assertEqual(result, 0)
         launch_gui.assert_called_once_with()

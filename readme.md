@@ -1,10 +1,10 @@
-# Autoname
+# photo-renamer
 
-Autoname is a tool that renames files based on the EXIF `DateTimeOriginal` metadata of photos and video metadata timestamps. If the media files do not contain embedded metadata, it will fall back to filesystem timestamps for renaming.
+photo-renamer is a tool that renames files based on the EXIF `DateTimeOriginal` metadata of photos and video metadata timestamps. If the media files do not contain embedded metadata, it will fall back to filesystem timestamps for renaming.
 
 If the filename contains a usable timestamp, it will take priority over other methods and be used for renaming.
 
-If the target filename already exists, Autoname will keep the timestamp prefix and append the original filename, and if needed, add a numeric suffix to avoid collisions.
+If the target filename already exists, photo-renamer will keep the timestamp prefix and append the original filename, and if needed, add a numeric suffix to avoid collisions.
 
 `python 3.11+`
 
@@ -12,11 +12,11 @@ If the target filename already exists, Autoname will keep the timestamp prefix a
 
 ### As Users
 
-Download the latest release [here](https://github.com/gymgle/autoname/releases)
+Download the latest release [here](https://github.com/gymgle/photo-renamer/releases)
 
 Current builds are GUI-only:
 
-- Double-click the executable, or run `python autoname.py`, to open the app.
+- Double-click the executable, or run `python photo_renamer.py`, to open the app.
 - The app includes a progress bar, drag-and-drop folder selection on Windows, result statistics, and error summaries.
 - You can switch the interface language between Simplified Chinese and English in the top-right corner.
 
@@ -25,8 +25,8 @@ Current builds are GUI-only:
 Desktop application:
 
 ```shell
-python autoname.py
-autoname.exe
+python photo_renamer.py
+photo-renamer.exe
 ```
 
 The app puts all options in the window, so you do not need to remember commands.
@@ -48,7 +48,7 @@ Windows drag-and-drop:
 
 ![Flowchat](./assets/flowchart.drawio.svg)
 
-Autoname chooses a time in this order:
+photo-renamer chooses a time in this order:
 
 1. Time found in the file name, unless you turn that option off.
 2. Photo EXIF `DateTimeOriginal`.
@@ -85,14 +85,14 @@ Preview mode:
 
 ```shell
 # 1. Clone the repository.
-$ git clone https://github.com/gymgle/autoname.git
+$ git clone https://github.com/gymgle/photo-renamer.git
 
 # 2. Install pip requirements.
-$ cd autoname
+$ cd photo-renamer
 $ pip3 install -r requirements.txt
 
 # 3. Try it!
-$ python autoname.py
+$ python photo_renamer.py
 ```
 
 Please **DO NOT** use `exifread 3.0.0` due to `exifread.heic.NoParser: hdlr` issue.
@@ -113,10 +113,10 @@ Build Windows/Linux/macOS executable binary file via PyInstaller.
 
 3. Build python script to executable binary file
     ```shell
-    $ pyinstaller autoname.spec
+    $ pyinstaller photo-renamer.spec
     ```
 
-You can find the packaged `autoname` in `dist` dir.
+You can find the packaged `photo-renamer` in `dist` dir.
 
 ### Filesystem fallback notes
 

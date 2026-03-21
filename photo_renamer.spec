@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['autoname.py'],
+    ['photo_renamer.py'],
     pathex=[],
     binaries=[],
     datas=[('assets\\icon.ico', 'assets')],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='autoname',
+    name='photo-renamer',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
