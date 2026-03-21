@@ -9,6 +9,12 @@ from unittest.mock import ANY, Mock, patch
 import photo_renamer
 
 
+class LockedFileError(PermissionError):
+    def __init__(self):
+        super().__init__(13, 'The process cannot access the file because it is being used by another process')
+        self.winerror = 32
+
+
 class PhotoRenamerTests(unittest.TestCase):
     def setUp(self):
         photo_renamer.date_format = '%Y-%m-%d %H.%M.%S'
@@ -17,6 +23,9 @@ class PhotoRenamerTests(unittest.TestCase):
         photo_renamer.disable_regex = False
         photo_renamer.regex_offset = 0
         self.repo_root = os.path.dirname(os.path.dirname(__file__))
+
+    def tearDown(self):
+        self._close_logger_handlers()
 
     def _close_logger_handlers(self):
         for handler in list(photo_renamer.logger.handlers):
@@ -49,6 +58,35 @@ class PhotoRenamerTests(unittest.TestCase):
             self.assertTrue(result)
             self.assertFalse(os.path.exists(source_path))
             self.assertTrue(os.path.exists(os.path.join(tmp_dir, '2024-03-17 10.15.20.jpg')))
+
+    def test_rename_file_with_retries_retries_windows_file_locks(self):
+        attempts = []
+
+        def flaky_rename(source_path, target_path):
+            attempts.append((source_path, target_path))
+            if len(attempts) < 3:
+                raise LockedFileError()
+
+        with patch('photo_renamer.platform.system', return_value='Windows'), \
+                patch('photo_renamer.os.rename', side_effect=flaky_rename), \
+                patch('photo_renamer.time.sleep') as mock_sleep, \
+                patch('photo_renamer.gc.collect') as mock_gc:
+            photo_renamer.rename_file_with_retries('source.jpg', 'target.jpg', attempts=5, delay_seconds=0.01)
+
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertEqual(mock_gc.call_count, 3)
+
+    def test_rename_file_with_retries_does_not_retry_other_permission_errors(self):
+        error = PermissionError(13, 'permission denied')
+
+        with patch('photo_renamer.platform.system', return_value='Windows'), \
+                patch('photo_renamer.os.rename', side_effect=error), \
+                patch('photo_renamer.time.sleep') as mock_sleep:
+            with self.assertRaises(PermissionError):
+                photo_renamer.rename_file_with_retries('source.jpg', 'target.jpg', attempts=5, delay_seconds=0.01)
+
+        mock_sleep.assert_not_called()
 
     def test_linux_fallback_uses_mtime_instead_of_ctime(self):
         fake_stat = SimpleNamespace(st_ctime=500, st_mtime=100)
@@ -88,6 +126,48 @@ class PhotoRenamerTests(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertEqual(err, photo_renamer.ValidationError('missing_dir'))
+
+    def test_execute_closes_log_file_handlers_after_completion(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config = photo_renamer.RunConfig(
+                dir_path=tmp_dir,
+                preview=True,
+                log_to_file=True,
+                log_path=tmp_dir,
+            )
+
+            with patch('photo_renamer.auto_rename', return_value=photo_renamer.RunStats()):
+                ok, result = photo_renamer.execute(config)
+
+            self.assertTrue(ok)
+            if not isinstance(result, photo_renamer.RunStats):
+                self.fail(f'expected RunStats, got {type(result).__name__}')
+            self.assertTrue(result.log_file_path.endswith('.log'))
+            self.assertEqual(photo_renamer.logger.handlers, [])
+
+            log_files = [name for name in os.listdir(tmp_dir) if name.endswith('.log')]
+            self.assertEqual(len(log_files), 1)
+            os.remove(os.path.join(tmp_dir, log_files[0]))
+
+    def test_open_directory_in_file_manager_uses_startfile_on_windows(self):
+        with patch('photo_renamer.platform.system', return_value='Windows'), \
+                patch('photo_renamer.os.startfile', create=True) as mock_startfile:
+            photo_renamer.open_directory_in_file_manager('D:/logs')
+
+        mock_startfile.assert_called_once_with('D:/logs')
+
+    def test_init_logger_returns_absolute_log_path_for_default_folder(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            current_dir = os.getcwd()
+            try:
+                os.chdir(tmp_dir)
+                log_file_path = photo_renamer.init_logger(log_to_file_enabled=True)
+            finally:
+                photo_renamer.close_logger_handlers()
+                os.chdir(current_dir)
+
+        self.assertTrue(os.path.isabs(log_file_path))
+        self.assertTrue(log_file_path.endswith('.log'))
 
     def test_auto_rename_filters_files_with_spaced_extension_list(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -177,6 +257,7 @@ class PhotoRenamerTests(unittest.TestCase):
             renamed_files=1,
             skipped_files=1,
             directories_scanned=1,
+            log_file_path='D:/logs/photo-renamer.log',
         )
 
         summary = photo_renamer.format_stats_summary(stats, preview_mode=False, language='en-US')
@@ -184,6 +265,20 @@ class PhotoRenamerTests(unittest.TestCase):
         self.assertIn('Scanned folders: 1', summary)
         self.assertIn('Matched files: 2', summary)
         self.assertIn('Renamed: 1', summary)
+        self.assertIn('Log file: D:/logs/photo-renamer.log', summary)
+
+    def test_format_stats_summary_can_hide_log_file_path(self):
+        stats = photo_renamer.RunStats(
+            total_files=2,
+            processed_files=2,
+            renamed_files=1,
+            directories_scanned=1,
+            log_file_path='D:/logs/photo-renamer.log',
+        )
+
+        summary = photo_renamer.format_stats_summary(stats, preview_mode=False, include_log_file=False)
+
+        self.assertNotIn('日志文件:', summary)
 
     def test_translate_falls_back_to_default_language(self):
         translated = photo_renamer.translate('fr-FR', 'run_button')
@@ -571,12 +666,34 @@ class PhotoRenamerTests(unittest.TestCase):
         gui.log_dir_label = Mock()
         gui.log_dir_entry = Mock()
         gui.log_dir_button = Mock()
+        gui.open_log_dir_button = Mock()
+        gui.last_log_file_path = ''
+        gui.job_running = False
 
         gui._update_log_file_controls()
 
         gui.log_dir_label.configure.assert_called_once_with(foreground='#9ca3af')
         gui.log_dir_entry.configure.assert_called_once_with(state='disabled')
         gui.log_dir_button.configure.assert_called_once_with(state='disabled')
+        gui.open_log_dir_button.grid_remove.assert_called_once_with()
+
+    def test_update_log_file_controls_shows_open_log_dir_button_when_enabled(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.log_to_file_var = Mock()
+        gui.log_to_file_var.get.return_value = True
+        gui.log_dir_label = Mock()
+        gui.log_dir_entry = Mock()
+        gui.log_dir_button = Mock()
+        gui.open_log_dir_button = Mock()
+        gui.last_log_file_path = ''
+        gui.job_running = False
+
+        gui._update_log_file_controls()
+
+        gui.log_dir_label.configure.assert_called_once_with(foreground='')
+        gui.log_dir_entry.configure.assert_called_once_with(state='normal')
+        gui.log_dir_button.configure.assert_called_once_with(state='normal')
+        gui.open_log_dir_button.grid.assert_called_once_with()
 
     def test_main_without_args_launches_gui(self):
         with patch('photo_renamer.launch_gui', return_value=0) as launch_gui:

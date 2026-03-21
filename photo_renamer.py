@@ -4,8 +4,11 @@
 import os
 import platform
 import re
+import subprocess
 import sys
+import time
 import webbrowser
+import gc
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
@@ -72,8 +75,8 @@ TRANSLATIONS = {
     'zh-CN': {
         'app_tagline': '根据拍摄时间重命名你的照片和视频',
         'mode_label': '界面模式',
-        'mode_simple': '简洁',
-        'mode_pro': '专业',
+        'mode_simple': '简洁模式',
+        'mode_pro': '专业模式',
         'language_label': '界面语言',
         'about_button': '关于',
         'settings_frame': '处理设置',
@@ -87,7 +90,7 @@ TRANSLATIONS = {
         'time_offset': '文件名时间偏移',
         'log_level': '日志详细程度',
         'log_to_file': '同时写入日志文件',
-        'log_dir': '日志保存位置',
+        'log_dir': '日志保存位置（默认当前文件夹）',
         'include_subdirs': '包含子文件夹',
         'preview_only': '仅预览新名字，不执行重命名',
         'disable_filename_time': '不从文件名里找时间',
@@ -105,6 +108,9 @@ TRANSLATIONS = {
         'metric_skipped': '跳过',
         'metric_failed': '失败',
         'log_frame': '处理记录',
+        'open_log_dir': '打开日志目录',
+        'open_log_dir_missing': '当前没有可打开的日志目录。',
+        'open_log_dir_failed': '无法打开日志目录: {value}',
         'footer_tip': '💡 建议先勾选“仅预览新名字”，确认结果后再正式执行。',
         'run_button': '开始处理',
         'run_button_running': '处理中...',
@@ -133,6 +139,7 @@ TRANSLATIONS = {
         'summary_failed': '失败: {value}',
         'summary_previewed': '预览结果: {value}',
         'summary_renamed': '已重命名: {value}',
+        'summary_log_file': '日志文件: {value}',
         'summary_errors': '错误摘要:',
         'summary_error_item': '- {message}',
         'summary_more_errors': '- 还有 {value} 条未展示',
@@ -166,7 +173,7 @@ TRANSLATIONS = {
         'time_offset': 'Filename time offset',
         'log_level': 'Log detail',
         'log_to_file': 'Also save logs to file',
-        'log_dir': 'Log save location',
+        'log_dir': 'Log save location (default current folder)',
         'include_subdirs': 'Include subfolders',
         'preview_only': 'Preview only, will not rename',
         'disable_filename_time': 'Do not read time from filename',
@@ -184,6 +191,9 @@ TRANSLATIONS = {
         'metric_skipped': 'Skipped',
         'metric_failed': 'Failed',
         'log_frame': 'Activity log',
+        'open_log_dir': 'Open Log Folder',
+        'open_log_dir_missing': 'There is no log folder to open yet.',
+        'open_log_dir_failed': 'Failed to open log folder: {value}',
         'footer_tip': '💡 It is safer to keep “Preview only” enabled first, confirm the results before renaming.',
         'run_button': 'Start',
         'run_button_running': 'Processing...',
@@ -212,6 +222,7 @@ TRANSLATIONS = {
         'summary_failed': 'Failed: {value}',
         'summary_previewed': 'Preview results: {value}',
         'summary_renamed': 'Renamed: {value}',
+        'summary_log_file': 'Log file: {value}',
         'summary_errors': 'Error summary:',
         'summary_error_item': '- {message}',
         'summary_more_errors': '- {value} more not shown',
@@ -403,6 +414,7 @@ class RunStats:
     failed_files: int = 0
     directories_scanned: int = 0
     current_file: str = ''
+    log_file_path: str = ''
     error_messages: list[str] = field(default_factory=list)
 
     @property
@@ -421,6 +433,7 @@ class RunStats:
             failed_files=self.failed_files,
             directories_scanned=self.directories_scanned,
             current_file=self.current_file,
+            log_file_path=self.log_file_path,
             error_messages=list(self.error_messages),
         )
 
@@ -609,7 +622,13 @@ def update_stats_for_outcome(stats: RunStats, outcome: str) -> None:
         stats.failed_files += 1
 
 
-def format_stats_summary(stats: RunStats, preview_mode: bool, max_errors: int = 5, language: str = 'zh-CN') -> str:
+def format_stats_summary(
+    stats: RunStats,
+    preview_mode: bool,
+    max_errors: int = 5,
+    language: str = 'zh-CN',
+    include_log_file: bool = True,
+) -> str:
     summary_lines = [
         translate(language, 'summary_dirs', value=stats.directories_scanned),
         translate(language, 'summary_total', value=stats.total_files),
@@ -622,6 +641,9 @@ def format_stats_summary(stats: RunStats, preview_mode: bool, max_errors: int = 
         summary_lines.append(translate(language, 'summary_previewed', value=stats.previewed_files))
     else:
         summary_lines.append(translate(language, 'summary_renamed', value=stats.renamed_files))
+
+    if include_log_file and stats.log_file_path:
+        summary_lines.append(translate(language, 'summary_log_file', value=stats.log_file_path))
 
     if stats.error_messages:
         summary_lines.append(translate(language, 'summary_errors'))
@@ -721,6 +743,8 @@ def rename_video(filepath: str, config: RunConfig | None = None) -> str:
 
 
 def rename_media(filepath: str, config: RunConfig | None = None) -> str:
+    parser = None
+    metadata = None
     try:
         parser = createParser(filepath)
         if parser is None:
@@ -738,6 +762,11 @@ def rename_media(filepath: str, config: RunConfig | None = None) -> str:
     except Exception:
         timestamp = 0.0
         exif_date = ''
+    finally:
+        metadata = None
+        parser = None
+        if platform.system().lower() == 'windows':
+            gc.collect()
 
     if timestamp > 0:
         utc_time = datetime.strptime(exif_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
@@ -765,6 +794,29 @@ def rename_with_datetime_from_filename(filepath: str, config: RunConfig | None =
     return None
 
 
+def is_windows_file_lock_error(exc: OSError) -> bool:
+    return platform.system().lower() == 'windows' and getattr(exc, 'winerror', None) == 32
+
+
+def rename_file_with_retries(source_path: str, target_path: str, attempts: int = 5, delay_seconds: float = 0.2) -> None:
+    last_error = None
+
+    for attempt in range(attempts):
+        try:
+            if platform.system().lower() == 'windows':
+                gc.collect()
+            os.rename(source_path, target_path)
+            return
+        except PermissionError as exc:
+            if not is_windows_file_lock_error(exc) or attempt == attempts - 1:
+                raise
+            last_error = exc
+            time.sleep(delay_seconds)
+
+    if last_error is not None:
+        raise last_error
+
+
 def rename_with_datetime(filepath: str, exif_date: datetime, config: RunConfig | None = None) -> str:
     active_config = config or runtime_config()
     date_taken = exif_date.strftime(active_config.date_format)
@@ -783,7 +835,7 @@ def rename_with_datetime(filepath: str, exif_date: datetime, config: RunConfig |
     if filepath != desired_path and active_config.force_rename and os.path.basename(filepath).startswith(date_taken):
         new_path = desired_path if not os.path.exists(desired_path) else resolve_target_path(filepath, date_taken)
 
-    os.rename(filepath, new_path)
+    rename_file_with_retries(filepath, new_path)
     logger.info(f'{os.path.basename(filepath)} -> {os.path.basename(new_path)}')
     return 'renamed'
 
@@ -850,12 +902,11 @@ def test_func(config: RunConfig | None = None) -> tuple[bool, ValidationError | 
     return True, 'tests passed'
 
 
-def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None, log_to_file_enabled: bool = False) -> None:
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-        handler.close()
+def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None, log_to_file_enabled: bool = False) -> str:
+    close_logger_handlers()
 
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    log_file = ''
 
     console_sink = sys.stdout or sys.stderr
     if console_sink is not None:
@@ -870,9 +921,30 @@ def init_logger(level: str = 'INFO', target_log_path: str = '', extra_sink=None,
     if log_to_file_enabled:
         log_filename = f'photo-renamer_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.log'
         log_file = os.path.join(target_log_path, log_filename) if target_log_path else log_filename
+        log_file = os.path.abspath(log_file)
         file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
         file_handler.setFormatter(logging.Formatter(LOGGER_FORMAT))
         logger.addHandler(file_handler)
+
+    return log_file
+
+
+def close_logger_handlers() -> None:
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def open_directory_in_file_manager(directory_path: str) -> None:
+    if platform.system().lower() == 'windows' and hasattr(os, 'startfile'):
+        os.startfile(directory_path)
+        return
+
+    if platform.system().lower() == 'darwin':
+        subprocess.Popen(['open', directory_path])
+        return
+
+    subprocess.Popen(['xdg-open', directory_path])
 
 
 def print_version() -> None:
@@ -886,17 +958,20 @@ def execute(
     language: str = 'zh-CN',
 ) -> tuple[bool, RunStats | str]:
     apply_runtime_config(config)
-    init_logger(config.log_level, config.log_path, extra_sink=extra_sink, log_to_file_enabled=config.log_to_file)
+    log_file_path = init_logger(config.log_level, config.log_path, extra_sink=extra_sink, log_to_file_enabled=config.log_to_file)
+    try:
+        ok, err = test_func(config)
+        if not ok:
+            localized_error = localize_validation_message(err, language)
+            logger.error(localized_error)
+            return False, localized_error
 
-    ok, err = test_func(config)
-    if not ok:
-        localized_error = localize_validation_message(err, language)
-        logger.error(localized_error)
-        return False, localized_error
-
-    stats = auto_rename(config.dir_path, config, progress_callback=progress_callback)
-    logger.info('task summary:\n' + format_stats_summary(stats, config.preview, language=language))
-    return True, stats
+        stats = auto_rename(config.dir_path, config, progress_callback=progress_callback)
+        stats.log_file_path = log_file_path
+        logger.info('task summary:\n' + format_stats_summary(stats, config.preview, language=language))
+        return True, stats
+    finally:
+        close_logger_handlers()
 
 
 class PhotoRenamerGUI:
@@ -939,6 +1014,7 @@ class PhotoRenamerGUI:
         self.last_run_config = defaults
         self.done_metric_preview_mode = self.preview_var.get()
         self.last_stats: RunStats | None = None
+        self.last_log_file_path = ''
         self.job_running = False
 
         self._build_layout()
@@ -1123,8 +1199,10 @@ class PhotoRenamerGUI:
 
         self.footer_label = ttk.Label(action_bar, text='')
         self.footer_label.grid(row=0, column=0, sticky='w')
+        self.open_log_dir_button = ttk.Button(action_bar, text='', command=self._open_log_dir)
+        self.open_log_dir_button.grid(row=0, column=1, sticky='e', padx=(8, 0))
         self.run_button = ttk.Button(action_bar, text='', command=self._start_job)
-        self.run_button.grid(row=0, column=1, sticky='e', padx=(8, 0))
+        self.run_button.grid(row=0, column=2, sticky='e', padx=(8, 0))
 
     def _create_metric(self, parent, column: int, variable):
         metric = ttk.Frame(parent, padding=(0, 0, 12, 0))
@@ -1185,7 +1263,9 @@ class PhotoRenamerGUI:
 
         self.output_frame.configure(text=self._text('log_frame'))
         self.footer_label.configure(text=self._text('footer_tip'))
+        self.open_log_dir_button.configure(text=self._text('open_log_dir'))
         self._refresh_run_button()
+        self._refresh_open_log_dir_button()
 
         if windnd is None:
             self.drop_hint_var.set(self._text('drop_hint_no_dnd'))
@@ -1362,11 +1442,45 @@ class PhotoRenamerGUI:
         self.log_dir_entry.configure(state=state)
         self.log_dir_button.configure(state=state)
 
+        if hasattr(self, 'open_log_dir_button'):
+            if enabled:
+                self.open_log_dir_button.grid()
+            else:
+                self.open_log_dir_button.grid_remove()
+
+        self._refresh_open_log_dir_button()
+
     def _append_log(self, message: str) -> None:
         self.log_text.configure(state='normal')
         self.log_text.insert('end', message + '\n')
         self.log_text.see('end')
         self.log_text.configure(state='disabled')
+
+    def _refresh_open_log_dir_button(self) -> None:
+        if not hasattr(self, 'open_log_dir_button'):
+            return
+
+        last_log_file_path = getattr(self, 'last_log_file_path', '')
+        job_running = getattr(self, 'job_running', False)
+        has_log_dir = bool(last_log_file_path and os.path.isdir(os.path.dirname(last_log_file_path)))
+        state = 'normal' if has_log_dir and not job_running else 'disabled'
+        self.open_log_dir_button.configure(state=state)
+
+    def _open_log_dir(self) -> None:
+        log_file_path = self.last_log_file_path.strip()
+        log_dir = os.path.dirname(log_file_path) if log_file_path else ''
+        if not log_dir or not os.path.isdir(log_dir):
+            message = self._text('open_log_dir_missing')
+            self._append_log(message)
+            self._show_message_dialog(self._text('dialog_failed_title'), message)
+            return
+
+        try:
+            open_directory_in_file_manager(log_dir)
+        except Exception as exc:
+            message = self._text('open_log_dir_failed', value=str(exc))
+            self._append_log(message)
+            self._show_message_dialog(self._text('dialog_failed_title'), message)
 
     def _clear_log_output(self) -> None:
         self.log_text.configure(state='normal')
@@ -1429,9 +1543,12 @@ class PhotoRenamerGUI:
         self.renamed_var.set('0')
         self.skipped_var.set('0')
         self.failed_var.set('0')
+        self._refresh_open_log_dir_button()
 
     def _update_progress(self, stats: RunStats) -> None:
         self.last_stats = stats
+        if stats.log_file_path:
+            self.last_log_file_path = stats.log_file_path
         self.progress_var.set(round(stats.completion_ratio * 100, 1))
         self.directories_var.set(str(stats.directories_scanned))
         self.total_var.set(str(stats.total_files))
@@ -1450,6 +1567,7 @@ class PhotoRenamerGUI:
 
         current_label = os.path.basename(stats.current_file) if stats.current_file else '-'
         self.current_file_var.set(self._text('current_file', name=current_label))
+        self._refresh_open_log_dir_button()
 
     def _start_job(self) -> None:
         if self.worker and self.worker.is_alive():
@@ -1471,10 +1589,12 @@ class PhotoRenamerGUI:
 
         self.last_run_config = config
         self.done_metric_preview_mode = config.preview
+        self.last_log_file_path = ''
         self._update_done_metric_label()
         self._reset_progress_view(show_scanning=True)
         self.job_running = True
         self._refresh_run_button()
+        self._refresh_open_log_dir_button()
         self._append_log(self._text('log_start'))
 
         self.worker = Thread(target=self._run_job, args=(config,), daemon=True)
@@ -1485,7 +1605,7 @@ class PhotoRenamerGUI:
             success, result = execute(config, extra_sink=self._emit_log, progress_callback=self._emit_progress, language=self.language_var.get())
             if success and isinstance(result, RunStats):
                 self._queue_event('progress', result)
-                summary_message = format_stats_summary(result, config.preview, language=self.language_var.get())
+                summary_message = format_stats_summary(result, config.preview, language=self.language_var.get(), include_log_file=False)
                 self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_done_title'), summary_message))
             else:
                 self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_failed_title'), str(result)))
@@ -1498,6 +1618,7 @@ class PhotoRenamerGUI:
     def _finish_job(self) -> None:
         self.job_running = False
         self._refresh_run_button()
+        self._refresh_open_log_dir_button()
 
 
 def launch_gui() -> int:
