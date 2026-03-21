@@ -113,7 +113,7 @@ Build Windows/Linux/macOS executable binary file via PyInstaller.
 
 3. Build python script to executable binary file
     ```shell
-    $ pyinstaller photo-renamer.spec
+    $ pyinstaller photo_renamer.spec
     ```
 
 You can find the packaged `photo-renamer` in `dist` dir.
