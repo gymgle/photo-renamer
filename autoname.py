@@ -24,6 +24,83 @@ Videos = ['.mp4', '.mov']
 LOGGER_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> ｜ <level>{message}</level>"
 
 
+def parse_extensions(extension_string: str) -> list[str]:
+    """
+    Normalize user-specified extensions.
+    :param extension_string: str, comma-separated extension list
+    :return: list[str], normalized extensions with dots
+    """
+    normalized_extensions = []
+    for ext in extension_string.lower().split(','):
+        cleaned_ext = ext.strip().lstrip('.')
+        if cleaned_ext:
+            normalized_extensions.append(f'.{cleaned_ext}')
+    return normalized_extensions
+
+
+def resolve_target_path(filepath: str, date_taken: str) -> str:
+    """
+    Build a non-conflicting target path for a renamed file.
+    :param filepath: str, current file path
+    :param date_taken: str, formatted datetime string
+    :return: str, target file path
+    """
+    file_dir = os.path.dirname(filepath)
+    file_ext = os.path.splitext(filepath)[-1]
+    original_filename = os.path.basename(filepath)
+    preferred_name = f'{date_taken}{file_ext}'
+    preferred_path = os.path.join(file_dir, preferred_name)
+    if filepath == preferred_path or not os.path.exists(preferred_path):
+        return preferred_path
+
+    fallback_name = f'{date_taken}_{original_filename}'
+    fallback_path = os.path.join(file_dir, fallback_name)
+    if filepath == fallback_path or not os.path.exists(fallback_path):
+        return fallback_path
+
+    suffix = 1
+    while True:
+        fallback_name = f'{date_taken}_{suffix}_{original_filename}'
+        fallback_path = os.path.join(file_dir, fallback_name)
+        if filepath == fallback_path or not os.path.exists(fallback_path):
+            return fallback_path
+        suffix += 1
+
+
+def get_fallback_datetime(filepath: str) -> datetime:
+    """
+    Fallback datetime from filesystem metadata and filename.
+    :param filepath: str, path to media file
+    :return: datetime
+    :raises ValueError: if no usable timestamp is available
+    """
+    file_stat = os.stat(filepath)
+    timestamp_candidates = []
+    system_name = platform.system().lower()
+
+    birthtime = getattr(file_stat, 'st_birthtime', None)
+    if birthtime and int(birthtime) > 0:
+        timestamp_candidates.append(int(birthtime))
+    elif system_name == 'windows' and int(file_stat.st_ctime) > 0:
+        timestamp_candidates.append(int(file_stat.st_ctime))
+
+    if int(file_stat.st_mtime) > 0:
+        timestamp_candidates.append(int(file_stat.st_mtime))
+
+    if system_name not in ('windows', 'linux') and int(file_stat.st_ctime) > 0:
+        timestamp_candidates.append(int(file_stat.st_ctime))
+
+    _, filename = os.path.split(filepath)
+    dt_from_filename = datetime_from_filename(filename)
+    if dt_from_filename:
+        timestamp_candidates.append(int(dt_from_filename.timestamp()))
+
+    if not timestamp_candidates:
+        raise ValueError(f'no fallback timestamp found for {filepath}')
+
+    return datetime.fromtimestamp(min(timestamp_candidates))
+
+
 def auto_rename(file_path: str) -> bool:
     """
     Auto rename
@@ -33,7 +110,7 @@ def auto_rename(file_path: str) -> bool:
     # User specified extensions
     specified_ext_list = []
     if extensions:  # If specified extensions option is enabled, add dot to user specified extensions
-        specified_ext_list = [f'.{ext}' for ext in extensions.lower().split(',')]
+        specified_ext_list = parse_extensions(extensions)
 
     # Traverse and rename files
     for filename in os.listdir(file_path):
@@ -48,11 +125,17 @@ def auto_rename(file_path: str) -> bool:
             if file_ext in Photos:
                 if only_video:
                     continue
-                rename_photo(abs_filename)
+                try:
+                    rename_photo(abs_filename)
+                except Exception as e:
+                    logger.error(f'failed to rename photo {filename}: {e}')
             elif file_ext in Videos:
                 if only_image:
                     continue
-                rename_video(abs_filename)
+                try:
+                    rename_video(abs_filename)
+                except Exception as e:
+                    logger.error(f'failed to rename video {filename}: {e}')
             else:
                 logger.warning(f'skip unsupported file: {filename}')
         # Handling directories
@@ -113,6 +196,7 @@ def rename_media(filepath: str) -> bool:
     :param filepath: str, path to media file
     :return: bool, True: rename success, False: no timestamp found
     """
+    exif_date = ''
     try:
         with createParser(filepath) as ps:
             metadata = extractMetadata(ps)
@@ -124,23 +208,8 @@ def rename_media(filepath: str) -> bool:
     if ts > 0:
         utc_time = datetime.strptime(exif_date, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
         local_time = utc_time.astimezone(datetime.now().astimezone().tzinfo)
-    else:  # no metadata found, use the min timestamp in birthtime / ctime / mtime / filename timestamp
-        file_stat = os.stat(filepath)
-        dt_list = []
-        for i in [int(file_stat.st_ctime), int(file_stat.st_mtime)]:
-            if i > 0:
-                dt_list.append(i)
-        if platform.system().lower() == 'darwin':  # birthtime in macOS
-            dt_list.append(int(file_stat.st_birthtime))
-
-        # Try to get timestamp from filename
-        _, filename = os.path.split(filepath)
-        dt_from_filename = datetime_from_filename(filename)
-        if dt_from_filename:
-            dt_list.append(int(dt_from_filename.timestamp()))
-
-        ctime = min(dt_list)
-        local_time = datetime.fromtimestamp(ctime)
+    else:
+        local_time = get_fallback_datetime(filepath)
     return rename_with_datetime(filepath, local_time)
 
 
@@ -176,24 +245,21 @@ def rename_with_datetime(filepath: str, exif_date: datetime) -> bool:
     :return: bool: True/False
     """
     date_taken = exif_date.strftime(date_format)
-    new_name = date_taken + os.path.splitext(filepath)[-1]
-    new_path = os.path.join(os.path.dirname(filepath), new_name)
+    new_path = resolve_target_path(filepath, date_taken)
+    desired_path = os.path.join(os.path.dirname(filepath), date_taken + os.path.splitext(filepath)[-1])
     if filepath == new_path:  # Skip already in demanded name
         logger.warning(f'skip: {os.path.basename(filepath)}')
         return True
-    if os.path.basename(filepath).startswith(date_taken):  # Skip if a valid timestamp already in demanded name
+    if not force_rename and os.path.basename(filepath).startswith(date_taken):  # Skip if a valid timestamp already in demanded name
         logger.warning(f'skip: {os.path.basename(filepath)}')
         return True
     if preview:
         logger.info(f'{os.path.basename(filepath)} -> {os.path.basename(new_path)}')
         return True
 
-    # Dangerous Ops: Rename
-    # Change name if the new path exist: add original filename after the date taken
-    if os.path.exists(new_path):
-        original_filename = os.path.basename(filepath)
-        new_name = '{date}_{org_filename}'.format(date=date_taken, org_filename=original_filename)
-        new_path = os.path.join(os.path.dirname(filepath), new_name)
+    if filepath != desired_path and force_rename and os.path.basename(filepath).startswith(date_taken):
+        new_path = desired_path if not os.path.exists(desired_path) else resolve_target_path(filepath, date_taken)
+
     os.rename(filepath, new_path)
     logger.success(f'{os.path.basename(filepath)} -> {os.path.basename(new_path)}')
 
@@ -220,7 +286,8 @@ def datetime_from_filename(filename) -> datetime | None:
         hour = int(match.group(4))
         minute = int(match.group(5))
         second = int(match.group(6))
-        microsecond = int(match.group(7)) if match.group(7) else 0
+        millisecond = int(match.group(7)) if match.group(7) else 0
+        microsecond = millisecond * 1000
 
         try:
             dt = datetime(year, month, day, hour, minute, second, microsecond)
@@ -246,7 +313,7 @@ def is_given_format(filename_without_ext: str) -> bool:
         return False
 
 
-def test_func() -> (bool, str):
+def test_func() -> tuple[bool, str]:
     """
     Test input is valid or not before processing
     :return: (bool, str), bool: valid or not, str: error msg
@@ -271,10 +338,9 @@ def test_func() -> (bool, str):
 
     # Check specified extensions
     if extensions:
-        for ext in extensions.lower().split(','):
-            ext_with_dot = f'.{ext}'
+        for ext_with_dot in parse_extensions(extensions):
             if ext_with_dot not in Photos + Videos:
-                return False, f'extension {ext} is not supported'
+                return False, f'extension {ext_with_dot.lstrip(".")} is not supported'
 
     return True, 'tests passed'
 
@@ -301,11 +367,11 @@ def print_version():
     print(f'version {Version}')
 
 
-if __name__ == '__main__':
-    # Fix multiprocessing issue in Windows with PyInstaller
-    freeze_support()
-
-    # Args analysis
+def create_parser() -> argparse.ArgumentParser:
+    """
+    Build the CLI argument parser.
+    :return: argparse.ArgumentParser
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dir', type=str, default='',
                         help='path to the directory that needs renaming')
@@ -328,12 +394,24 @@ if __name__ == '__main__':
                         help='log file path, default: current directory')
     parser.add_argument('-ro', '--regex_offset', type=float, default=0,
                         help='offset in hours when using regex from filename, e.g. 8 for UTC+8 if filename timezone is UTC')
-    parser.add_argument('-oi', '--only-image', action='store_true', default=False,
-                        help='rename only for image files, disabled by default')
-    parser.add_argument('-ov', '--only-video', action='store_true', default=False,
-                        help='rename only for video files, disabled by default')
+
+    media_group = parser.add_mutually_exclusive_group()
+    media_group.add_argument('-oi', '--only-image', action='store_true', default=False,
+                             help='rename only for image files, disabled by default')
+    media_group.add_argument('-ov', '--only-video', action='store_true', default=False,
+                             help='rename only for video files, disabled by default')
+
     parser.add_argument('-v', '--version', action='store_true', default=False,
                         help='show version')
+    return parser
+
+
+if __name__ == '__main__':
+    # Fix multiprocessing issue in Windows with PyInstaller
+    freeze_support()
+
+    # Args analysis
+    parser = create_parser()
 
     args = vars(parser.parse_args())
     dir_path = args.get('dir', '')
