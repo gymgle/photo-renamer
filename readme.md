@@ -113,7 +113,7 @@ Build Windows/Linux/macOS executable binary file via PyInstaller.
 
 3. Build python script to executable binary file
     ```shell
-    $ pyinstaller -F -w -i ./assets/icon.ico autoname.py
+    $ pyinstaller autoname.spec
     ```
 
 You can find the packaged `autoname` in `dist` dir.

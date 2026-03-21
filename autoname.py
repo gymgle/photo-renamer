@@ -227,6 +227,11 @@ def app_display_name(language: str) -> str:
     return APP_DISPLAY_NAMES.get(language, APP_DISPLAY_NAMES['zh-CN'])
 
 
+def resource_path(relative_path: str) -> str:
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+
 def localize_validation_message(message: str, language: str) -> str:
     if message == 'file path need to be specified with -d argument':
         return translate(language, 'validation_missing_dir')
@@ -1225,6 +1230,12 @@ def launch_gui() -> int:
         return 1
 
     root = tk.Tk()
+    icon_path = resource_path(os.path.join('assets', 'icon.ico'))
+    if os.path.exists(icon_path):
+        try:
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass
     AutonameGUI(root)
     root.mainloop()
     return 0

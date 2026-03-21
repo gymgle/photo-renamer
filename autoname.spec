@@ -5,7 +5,7 @@ a = Analysis(
     ['autoname.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets\\icon.ico', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
