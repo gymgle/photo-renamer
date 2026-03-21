@@ -4,7 +4,7 @@ import unittest
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, Mock, patch
 
 import photo_renamer
 
@@ -80,6 +80,14 @@ class PhotoRenamerTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(err, 'tests passed')
+
+    def test_test_func_returns_structured_error_for_missing_dir(self):
+        photo_renamer.dir_path = ''
+
+        ok, err = photo_renamer.test_func()
+
+        self.assertFalse(ok)
+        self.assertEqual(err, photo_renamer.ValidationError('missing_dir'))
 
     def test_auto_rename_filters_files_with_spaced_extension_list(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -198,6 +206,64 @@ class PhotoRenamerTests(unittest.TestCase):
 
         self.assertEqual(translated, 'Please choose a folder to process first.')
 
+    def test_localize_validation_message_supports_structured_error_in_english(self):
+        translated = photo_renamer.localize_validation_message(photo_renamer.ValidationError('missing_dir'), 'en-US')
+
+        self.assertEqual(translated, 'Please choose a folder to process first.')
+
+    def test_localize_validation_message_translates_missing_target_dir_to_chinese(self):
+        translated = photo_renamer.localize_validation_message('D:/missing-folder is not exist', 'zh-CN')
+
+        self.assertEqual(translated, '要处理的文件夹不存在: D:/missing-folder')
+
+    def test_localize_validation_message_translates_structured_missing_target_dir_to_chinese(self):
+        translated = photo_renamer.localize_validation_message(
+            photo_renamer.ValidationError('dir_not_exist', 'D:/missing-folder'),
+            'zh-CN',
+        )
+
+        self.assertEqual(translated, '要处理的文件夹不存在: D:/missing-folder')
+
+    def test_localize_validation_message_translates_missing_target_dir_to_english(self):
+        translated = photo_renamer.localize_validation_message('D:/missing-folder is not exist', 'en-US')
+
+        self.assertEqual(translated, 'The folder to process does not exist: D:/missing-folder')
+
+    def test_localize_validation_message_translates_structured_missing_log_dir_to_english(self):
+        translated = photo_renamer.localize_validation_message(
+            photo_renamer.ValidationError('missing_log_dir', 'D:/missing-log-dir'),
+            'en-US',
+        )
+
+        self.assertEqual(translated, 'The selected log folder does not exist: D:/missing-log-dir')
+
+    def test_localize_validation_message_translates_legacy_missing_log_dir_to_chinese(self):
+        translated = photo_renamer.localize_validation_message('log path D:/missing-log-dir is not exist', 'zh-CN')
+
+        self.assertEqual(translated, '日志保存位置不存在: D:/missing-log-dir')
+
+    def test_execute_returns_localized_validation_error(self):
+        config = photo_renamer.RunConfig(dir_path='')
+
+        with patch('photo_renamer.init_logger'), patch.object(photo_renamer.logger, 'error') as mock_error:
+            ok, err = photo_renamer.execute(config, language='en-US')
+
+        self.assertFalse(ok)
+        self.assertEqual(err, 'Please choose a folder to process first.')
+        mock_error.assert_called_once_with('Please choose a folder to process first.')
+
+    def test_execute_returns_localized_missing_log_dir_with_path(self):
+        config = photo_renamer.RunConfig(dir_path='D:/ok', log_path='D:/missing-log-dir')
+
+        with patch('photo_renamer.init_logger'), \
+                patch('photo_renamer.os.path.exists', side_effect=lambda path: path == 'D:/ok'), \
+                patch.object(photo_renamer.logger, 'error') as mock_error:
+            ok, err = photo_renamer.execute(config, language='en-US')
+
+        self.assertFalse(ok)
+        self.assertEqual(err, 'The selected log folder does not exist: D:/missing-log-dir')
+        mock_error.assert_called_once_with('The selected log folder does not exist: D:/missing-log-dir')
+
     def test_format_about_message_contains_version_and_repo_url(self):
         message = photo_renamer.format_about_message('zh-CN')
 
@@ -210,6 +276,184 @@ class PhotoRenamerTests(unittest.TestCase):
 
         self.assertIn(f'Version: {photo_renamer.Version}', message)
         self.assertIn(f'Open source: {photo_renamer.OPEN_SOURCE_URL}', message)
+
+    def test_apply_window_icon_sets_default_and_current_icon(self):
+        window = Mock()
+
+        with patch('photo_renamer.app_icon_path', return_value='C:/tmp/icon.ico'), \
+                patch('photo_renamer.os.path.exists', return_value=True):
+            photo_renamer.apply_window_icon(window)
+
+        window.iconbitmap.assert_any_call(default='C:/tmp/icon.ico')
+        window.iconbitmap.assert_any_call('C:/tmp/icon.ico')
+        self.assertEqual(window.iconbitmap.call_count, 2)
+
+    def test_center_window_places_window_in_screen_center(self):
+        window = Mock()
+        window.winfo_width.return_value = 740
+        window.winfo_height.return_value = 640
+        window.winfo_reqwidth.return_value = 740
+        window.winfo_reqheight.return_value = 640
+        window.winfo_screenwidth.return_value = 1920
+        window.winfo_screenheight.return_value = 1080
+        window.winfo_rootx.return_value = 8
+        window.winfo_x.return_value = 0
+        window.winfo_rooty.return_value = 31
+        window.winfo_y.return_value = 0
+
+        photo_renamer.center_window(window)
+
+        window.update_idletasks.assert_called_once_with()
+        window.geometry.assert_called_once_with('740x640+582+200')
+
+    def test_center_child_window_places_dialog_relative_to_parent(self):
+        window = Mock()
+        window.winfo_width.return_value = 420
+        window.winfo_height.return_value = 180
+        window.winfo_reqwidth.return_value = 420
+        window.winfo_reqheight.return_value = 180
+        window.winfo_rootx.return_value = 8
+        window.winfo_x.return_value = 0
+        window.winfo_rooty.return_value = 31
+        window.winfo_y.return_value = 0
+
+        parent = Mock()
+        parent.winfo_rootx.return_value = 300
+        parent.winfo_rooty.return_value = 200
+        parent.winfo_width.return_value = 740
+        parent.winfo_height.return_value = 640
+
+        photo_renamer.center_child_window(window, parent)
+
+        window.update_idletasks.assert_called_once_with()
+        parent.update_idletasks.assert_called_once_with()
+        window.geometry.assert_called_once_with('+452+410')
+
+    def test_center_child_window_uses_parent_frame_for_hidden_dialog(self):
+        window = Mock()
+        window.winfo_width.return_value = 420
+        window.winfo_height.return_value = 180
+        window.winfo_reqwidth.return_value = 420
+        window.winfo_reqheight.return_value = 180
+        window.winfo_rootx.return_value = 0
+        window.winfo_x.return_value = 0
+        window.winfo_rooty.return_value = 0
+        window.winfo_y.return_value = 0
+
+        parent = Mock()
+        parent.winfo_rootx.return_value = 300
+        parent.winfo_x.return_value = 292
+        parent.winfo_rooty.return_value = 200
+        parent.winfo_y.return_value = 169
+        parent.winfo_width.return_value = 740
+        parent.winfo_height.return_value = 640
+
+        photo_renamer.center_child_window(window, parent)
+
+        window.geometry.assert_called_once_with('+452+410')
+
+    def test_present_modal_dialog_centers_before_showing(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.root = Mock()
+
+        dialog = Mock()
+        focus_widget = Mock()
+
+        with patch('photo_renamer.center_child_window') as center_child_window:
+            gui._present_modal_dialog(dialog, focus_widget=focus_widget, wait=True)
+
+        center_child_window.assert_called_once_with(dialog, gui.root)
+        dialog.deiconify.assert_called_once_with()
+        dialog.lift.assert_called_once_with(gui.root)
+        focus_widget.focus_set.assert_called_once_with()
+        gui.root.wait_window.assert_called_once_with(dialog)
+
+    def test_present_root_window_reveals_after_centering(self):
+        window = Mock()
+
+        with patch('photo_renamer.center_window') as center_window:
+            photo_renamer.present_root_window(window)
+
+        center_window.assert_called_once_with(window)
+        window.attributes.assert_any_call('-alpha', 0.0)
+        window.deiconify.assert_called_once_with()
+        window.attributes.assert_any_call('-alpha', 1.0)
+
+    def test_dialog_wraplength_respects_min_and_max_width(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        fake_font = Mock()
+        fake_font.measure.side_effect = lambda text: len(text) * 10
+
+        with patch('photo_renamer.tkfont.nametofont', return_value=fake_font):
+            short_wrap = gui._dialog_wraplength('short')
+            long_wrap = gui._dialog_wraplength('x' * 200)
+
+        self.assertEqual(short_wrap, 280)
+        self.assertEqual(long_wrap, 560)
+
+    def test_show_input_error_uses_custom_modal_dialog(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui._append_log = Mock()
+        gui._show_message_dialog = Mock()
+        gui._text = lambda key, **kwargs: {'dialog_input_title': 'Invalid input'}[key]
+
+        gui._show_input_error('Bad value')
+
+        gui._append_log.assert_called_once_with('Invalid input: Bad value')
+        gui._show_message_dialog.assert_called_once_with('Invalid input', 'Bad value')
+
+    def test_start_job_uses_custom_modal_dialog_when_busy(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.worker = Mock()
+        gui.worker.is_alive.return_value = True
+        gui._show_message_dialog = Mock()
+        gui._text = lambda key, **kwargs: {
+            'dialog_busy_title': 'Processing',
+            'dialog_busy_message': 'Please wait.',
+        }[key]
+
+        gui._start_job()
+
+        gui._show_message_dialog.assert_called_once_with('Processing', 'Please wait.')
+
+    def test_update_done_metric_label_uses_run_state_not_checkbox_state(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.metric_labels = [Mock(), Mock(), Mock(), Mock(), Mock(), Mock()]
+        gui.done_metric_preview_mode = False
+        gui.preview_var = Mock()
+        gui.preview_var.get.return_value = True
+        gui._text = lambda key, **kwargs: key
+
+        gui._update_done_metric_label()
+
+        gui.metric_labels[3].configure.assert_called_once_with(text='metric_done_renamed')
+
+    def test_start_job_updates_done_metric_label_from_current_preview_choice(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.worker = None
+        gui._clear_log_output = Mock()
+        config = photo_renamer.RunConfig(dir_path='D:/photos', preview=True)
+        gui._build_config = Mock(return_value=config)
+        gui._show_input_error = Mock()
+        gui.language_var = Mock()
+        gui.language_var.get.return_value = 'zh-CN'
+        gui._reset_progress_view = Mock()
+        gui._refresh_run_button = Mock()
+        gui._append_log = Mock()
+        gui._run_job = Mock()
+        gui._update_done_metric_label = Mock()
+        gui.done_metric_preview_mode = False
+        gui._text = lambda key, **kwargs: {'log_start': '开始处理...'}[key]
+
+        with patch('photo_renamer.test_func', return_value=(True, 'tests passed')), \
+                patch('photo_renamer.Thread') as thread_cls:
+            thread_instance = Mock()
+            thread_cls.return_value = thread_instance
+
+            gui._start_job()
+
+        self.assertTrue(gui.done_metric_preview_mode)
+        gui._update_done_metric_label.assert_called_once_with()
 
     def test_init_logger_skips_missing_console_sink(self):
         self._close_logger_handlers()

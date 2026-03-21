@@ -21,11 +21,12 @@ from hachoir.parser import createParser
 
 try:
     import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
+    import tkinter.font as tkfont
+    from tkinter import filedialog, ttk
 except ImportError:  # pragma: no cover
     tk = cast(Any, None)
+    tkfont = cast(Any, None)
     filedialog = cast(Any, None)
-    messagebox = cast(Any, None)
     ttk = cast(Any, None)
 
 try:
@@ -87,7 +88,7 @@ TRANSLATIONS = {
         'log_level': '日志详细程度',
         'log_dir': '日志保存位置',
         'include_subdirs': '包含子文件夹',
-        'preview_only': '先预览，不改文件',
+        'preview_only': '仅预览新名字，不执行重命名',
         'disable_filename_time': '不从文件名里找时间',
         'force_rename': '即使文件名看起来已正确也重新处理',
         'scope_frame': '处理范围',
@@ -103,7 +104,7 @@ TRANSLATIONS = {
         'metric_skipped': '跳过',
         'metric_failed': '失败',
         'log_frame': '处理记录',
-        'footer_tip': '💡 建议先勾选“先预览，不改文件”，确认结果后再正式执行。',
+        'footer_tip': '💡 建议先勾选“仅预览新名字”，确认结果后再正式执行。',
         'run_button': '开始处理',
         'run_button_running': '处理中...',
         'drop_hint_no_dnd': '可以点击“浏览”选择文件夹。安装 windnd 后也可以直接拖进窗口。',
@@ -139,7 +140,9 @@ TRANSLATIONS = {
         'about_version': '版本: {version}',
         'about_open_source': '开源地址: {url}',
         'validation_missing_dir': '请先选择要处理的文件夹。',
+        'validation_dir_not_exist': '要处理的文件夹不存在: {value}',
         'validation_missing_log_dir': '日志保存位置不存在。',
+        'validation_log_dir_not_exist': '日志保存位置不存在: {value}',
         'validation_invalid_format': '新文件名格式无效。',
         'validation_invalid_extension': '包含不支持的文件格式: {value}',
         'validation_conflicting_media': '不能同时只处理图片和只处理视频。',
@@ -163,7 +166,7 @@ TRANSLATIONS = {
         'log_level': 'Log detail',
         'log_dir': 'Log save location',
         'include_subdirs': 'Include subfolders',
-        'preview_only': 'Preview only, do not rename',
+        'preview_only': 'Preview only, will not rename',
         'disable_filename_time': 'Do not read time from filename',
         'force_rename': 'Reprocess even if the name already looks correct',
         'scope_frame': 'Scope',
@@ -179,7 +182,7 @@ TRANSLATIONS = {
         'metric_skipped': 'Skipped',
         'metric_failed': 'Failed',
         'log_frame': 'Activity log',
-        'footer_tip': '💡 It is safer to keep “Preview only, do not rename” enabled first, then run again for real after checking the result.',
+        'footer_tip': '💡 It is safer to keep “Preview only” enabled first, confirm the results before renaming.',
         'run_button': 'Start',
         'run_button_running': 'Processing...',
         'drop_hint_no_dnd': 'Click Browse to choose a folder. If windnd is installed, you can also drag files or folders into the window.',
@@ -215,7 +218,9 @@ TRANSLATIONS = {
         'about_version': 'Version: {version}',
         'about_open_source': 'Open source: {url}',
         'validation_missing_dir': 'Please choose a folder to process first.',
+        'validation_dir_not_exist': 'The folder to process does not exist: {value}',
         'validation_missing_log_dir': 'The selected log folder does not exist.',
+        'validation_log_dir_not_exist': 'The selected log folder does not exist: {value}',
         'validation_invalid_format': 'The filename format is invalid.',
         'validation_invalid_extension': 'Contains unsupported file format: {value}',
         'validation_conflicting_media': 'You cannot select both images only and videos only at the same time.',
@@ -252,11 +257,113 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-def localize_validation_message(message: str, language: str) -> str:
+def app_icon_path() -> str:
+    return resource_path(os.path.join('assets', 'icon.ico'))
+
+
+def apply_window_icon(window) -> None:
+    icon_path = app_icon_path()
+    if not os.path.exists(icon_path):
+        return
+
+    try:
+        window.iconbitmap(default=icon_path)
+    except Exception:
+        pass
+
+    try:
+        window.iconbitmap(icon_path)
+    except Exception:
+        pass
+
+
+def center_window(window) -> None:
+    window.update_idletasks()
+
+    width = window.winfo_width() or window.winfo_reqwidth()
+    height = window.winfo_height() or window.winfo_reqheight()
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    frame_width = max(window.winfo_rootx() - window.winfo_x(), 0)
+    titlebar_height = max(window.winfo_rooty() - window.winfo_y(), 0)
+    outer_width = width + frame_width * 2
+    outer_height = height + titlebar_height + frame_width
+
+    x_pos = max((screen_width - outer_width) // 2, 0)
+    y_pos = max((screen_height - outer_height) // 2, 0)
+
+    window.geometry(f'{width}x{height}+{x_pos}+{y_pos}')
+
+
+def center_child_window(window, parent) -> None:
+    window.update_idletasks()
+    parent.update_idletasks()
+
+    width = window.winfo_width() or window.winfo_reqwidth()
+    height = window.winfo_height() or window.winfo_reqheight()
+
+    frame_width = max(window.winfo_rootx() - window.winfo_x(), 0)
+    titlebar_height = max(window.winfo_rooty() - window.winfo_y(), 0)
+    if frame_width == 0 and titlebar_height == 0:
+        frame_width = max(parent.winfo_rootx() - parent.winfo_x(), 0)
+        titlebar_height = max(parent.winfo_rooty() - parent.winfo_y(), 0)
+
+    outer_width = width + frame_width * 2
+    outer_height = height + titlebar_height + frame_width
+
+    parent_x = parent.winfo_rootx()
+    parent_y = parent.winfo_rooty()
+    parent_width = parent.winfo_width()
+    parent_height = parent.winfo_height()
+
+    x_pos = max(parent_x + (parent_width - outer_width) // 2, 0)
+    y_pos = max(parent_y + (parent_height - outer_height) // 2, 0)
+
+    window.geometry(f'+{x_pos}+{y_pos}')
+
+
+def present_root_window(window) -> None:
+    try:
+        window.attributes('-alpha', 0.0)
+    except Exception:
+        pass
+
+    window.deiconify()
+    center_window(window)
+
+    try:
+        window.attributes('-alpha', 1.0)
+    except Exception:
+        pass
+
+
+def localize_validation_message(message: 'ValidationError | str', language: str) -> str:
+    if isinstance(message, ValidationError):
+        if message.code == 'missing_dir':
+            return translate(language, 'validation_missing_dir')
+        if message.code == 'dir_not_exist':
+            return translate(language, 'validation_dir_not_exist', value=message.value)
+        if message.code == 'missing_log_dir':
+            if message.value:
+                return translate(language, 'validation_log_dir_not_exist', value=message.value)
+            return translate(language, 'validation_missing_log_dir')
+        if message.code == 'invalid_format':
+            return translate(language, 'validation_invalid_format')
+        if message.code == 'invalid_extension':
+            return translate(language, 'validation_invalid_extension', value=message.value)
+        if message.code == 'conflicting_media':
+            return translate(language, 'validation_conflicting_media')
+        return message.value or message.code
+
     if message == 'file path need to be specified with -d argument':
         return translate(language, 'validation_missing_dir')
+    if message.endswith(' is not exist') and not message.startswith('log path '):
+        missing_path = message[:-len(' is not exist')]
+        return translate(language, 'validation_dir_not_exist', value=missing_path)
     if message.startswith('log path ') and message.endswith(' is not exist'):
-        return translate(language, 'validation_missing_log_dir')
+        missing_path = message[len('log path '):-len(' is not exist')]
+        return translate(language, 'validation_log_dir_not_exist', value=missing_path)
     if message.startswith('date format invalid:'):
         return translate(language, 'validation_invalid_format')
     if message.startswith('extension ') and message.endswith(' is not supported'):
@@ -313,6 +420,12 @@ class RunStats:
             current_file=self.current_file,
             error_messages=list(self.error_messages),
         )
+
+
+@dataclass(slots=True, frozen=True)
+class ValidationError:
+    code: str
+    value: str = ''
 
 
 dir_path = ''
@@ -702,30 +815,30 @@ def is_given_format(filename_without_ext: str, expected_format: str | None = Non
         return False
 
 
-def test_func(config: RunConfig | None = None) -> tuple[bool, str]:
+def test_func(config: RunConfig | None = None) -> tuple[bool, ValidationError | str]:
     active_config = config or runtime_config()
 
     if not active_config.dir_path:
-        return False, 'file path need to be specified with -d argument'
+        return False, ValidationError('missing_dir')
 
     if not os.path.exists(active_config.dir_path):
-        return False, f'{active_config.dir_path} is not exist'
+        return False, ValidationError('dir_not_exist', active_config.dir_path)
 
     if active_config.log_path and not os.path.exists(active_config.log_path):
-        return False, f'log path {active_config.log_path} is not exist'
+        return False, ValidationError('missing_log_dir', active_config.log_path)
 
     try:
         datetime.now().strftime(active_config.date_format)
     except ValueError as exc:
-        return False, f'date format invalid: {active_config.date_format}, {exc}'
+        return False, ValidationError('invalid_format', f'{active_config.date_format}, {exc}')
 
     if active_config.only_image and active_config.only_video:
-        return False, 'only-image and only-video cannot be enabled together'
+        return False, ValidationError('conflicting_media')
 
     if active_config.extensions:
         for ext_with_dot in parse_extensions(active_config.extensions):
             if ext_with_dot not in Photos + Videos:
-                return False, f'extension {ext_with_dot.lstrip(".")} is not supported'
+                return False, ValidationError('invalid_extension', ext_with_dot.lstrip('.'))
 
     return True, 'tests passed'
 
@@ -769,8 +882,9 @@ def execute(
 
     ok, err = test_func(config)
     if not ok:
-        logger.error(err)
-        return False, err
+        localized_error = localize_validation_message(err, language)
+        logger.error(localized_error)
+        return False, localized_error
 
     stats = auto_rename(config.dir_path, config, progress_callback=progress_callback)
     logger.info('task summary:\n' + format_stats_summary(stats, config.preview, language=language))
@@ -814,10 +928,9 @@ class PhotoRenamerGUI:
         self.skipped_var = tk.StringVar(value='0')
         self.failed_var = tk.StringVar(value='0')
         self.last_run_config = defaults
+        self.done_metric_preview_mode = self.preview_var.get()
         self.last_stats: RunStats | None = None
         self.job_running = False
-
-        self.preview_var.trace_add('write', self._on_preview_mode_toggled)
 
         self._build_layout()
         self._enable_drag_and_drop()
@@ -1078,19 +1191,70 @@ class PhotoRenamerGUI:
             self.language_var.set(selected_value)
         self._apply_language()
 
-    def _show_about_dialog(self) -> None:
+    def _create_modal_dialog(self, title: str) -> Any:
         dialog = tk.Toplevel(self.root)
-        dialog.title(self._text('about_title'))
+        dialog.withdraw()
+        dialog.title(title)
+        apply_window_icon(dialog)
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
+        dialog.protocol('WM_DELETE_WINDOW', dialog.destroy)
+        return dialog
+
+    def _dialog_wraplength(self, *texts: str, min_width: int = 280, max_width: int = 560) -> int:
+        if tkfont is None:
+            return max_width
+
+        default_font = tkfont.nametofont('TkDefaultFont')
+        measured_width = min_width
+        for text in texts:
+            for line in text.splitlines() or ['']:
+                measured_width = max(measured_width, default_font.measure(line) + 24)
+        return max(min_width, min(measured_width, max_width))
+
+    def _present_modal_dialog(self, dialog, focus_widget=None, wait: bool = False) -> None:
+        center_child_window(dialog, self.root)
+        dialog.deiconify()
+        dialog.lift(self.root)
+        if focus_widget is not None:
+            focus_widget.focus_set()
+        if wait:
+            self.root.wait_window(dialog)
+
+    def _show_message_dialog(self, title: str, message: str) -> None:
+        dialog = self._create_modal_dialog(title)
+        wraplength = self._dialog_wraplength(message)
+
+        content = ttk.Frame(dialog, padding=16)
+        content.pack(fill='both', expand=True)
+
+        ttk.Label(content, text=message, wraplength=wraplength, justify='left').pack(anchor='w')
+
+        actions = ttk.Frame(content)
+        actions.pack(fill='x', pady=(12, 0))
+
+        ok_button = ttk.Button(actions, text='OK', command=dialog.destroy)
+        ok_button.pack(side='right')
+
+        self._present_modal_dialog(dialog, focus_widget=ok_button, wait=True)
+
+    def _show_about_dialog(self) -> None:
+        dialog = self._create_modal_dialog(self._text('about_title'))
+        open_source_label = translate(self.language_var.get(), 'about_open_source', url='')
+        wraplength = self._dialog_wraplength(
+            app_display_name(self.language_var.get()),
+            translate(self.language_var.get(), 'about_version', version=Version),
+            open_source_label,
+            OPEN_SOURCE_URL,
+        )
 
         content = ttk.Frame(dialog, padding=16)
         content.pack(fill='both', expand=True)
 
         ttk.Label(content, text=app_display_name(self.language_var.get()), font=('Segoe UI', 12, 'bold')).pack(anchor='w')
         ttk.Label(content, text=translate(self.language_var.get(), 'about_version', version=Version)).pack(anchor='w', pady=(8, 0))
-        ttk.Label(content, text=translate(self.language_var.get(), 'about_open_source', url=''), wraplength=420, justify='left').pack(anchor='w', pady=(4, 0))
+        ttk.Label(content, text=open_source_label, wraplength=wraplength, justify='left').pack(anchor='w', pady=(4, 0))
 
         repo_link = tk.Label(
             content,
@@ -1099,7 +1263,7 @@ class PhotoRenamerGUI:
             cursor='hand2',
             font=('Segoe UI', 9, 'underline'),
             justify='left',
-            wraplength=420,
+            wraplength=wraplength,
         )
         repo_link.pack(anchor='w')
         repo_link.bind('<Button-1>', lambda _event: webbrowser.open(OPEN_SOURCE_URL))
@@ -1109,10 +1273,10 @@ class PhotoRenamerGUI:
         actions = ttk.Frame(content)
         actions.pack(fill='x', pady=(12, 0))
 
-        ttk.Button(actions, text='OK', command=dialog.destroy).pack(side='right')
+        ok_button = ttk.Button(actions, text='OK', command=dialog.destroy)
+        ok_button.pack(side='right')
 
-        dialog.update_idletasks()
-        dialog.geometry(f'+{self.root.winfo_rootx() + 80}+{self.root.winfo_rooty() + 80}')
+        self._present_modal_dialog(dialog, focus_widget=ok_button)
 
     def _on_mode_changed(self, _event=None) -> None:
         selected_value = self.mode_combo.get().strip()
@@ -1122,12 +1286,8 @@ class PhotoRenamerGUI:
                 break
         self._apply_mode_layout()
 
-    def _on_preview_mode_toggled(self, *_args) -> None:
-        if hasattr(self, 'metric_labels'):
-            self._update_done_metric_label()
-
     def _update_done_metric_label(self) -> None:
-        done_key = 'metric_done_preview' if self.preview_var.get() else 'metric_done_renamed'
+        done_key = 'metric_done_preview' if self.done_metric_preview_mode else 'metric_done_renamed'
         self.metric_labels[3].configure(text=self._text(done_key))
 
     def _apply_advanced_visibility(self) -> None:
@@ -1190,7 +1350,7 @@ class PhotoRenamerGUI:
 
     def _show_input_error(self, message: str) -> None:
         self._append_log(f'{self._text("dialog_input_title")}: {message}')
-        messagebox.showerror(self._text('dialog_input_title'), message)
+        self._show_message_dialog(self._text('dialog_input_title'), message)
 
     def _queue_event(self, kind: str, payload: Any) -> None:
         self.event_queue.put((kind, payload))
@@ -1267,7 +1427,7 @@ class PhotoRenamerGUI:
 
     def _start_job(self) -> None:
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo(self._text('dialog_busy_title'), self._text('dialog_busy_message'))
+            self._show_message_dialog(self._text('dialog_busy_title'), self._text('dialog_busy_message'))
             return
 
         self._clear_log_output()
@@ -1284,6 +1444,8 @@ class PhotoRenamerGUI:
             return
 
         self.last_run_config = config
+        self.done_metric_preview_mode = config.preview
+        self._update_done_metric_label()
         self._reset_progress_view(show_scanning=True)
         self.job_running = True
         self._refresh_run_button()
@@ -1298,12 +1460,12 @@ class PhotoRenamerGUI:
             if success and isinstance(result, RunStats):
                 self._queue_event('progress', result)
                 summary_message = format_stats_summary(result, config.preview, language=self.language_var.get())
-                self.root.after(0, lambda: messagebox.showinfo(self._text('dialog_done_title'), summary_message))
+                self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_done_title'), summary_message))
             else:
-                self.root.after(0, lambda: messagebox.showerror(self._text('dialog_failed_title'), str(result)))
+                self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_failed_title'), str(result)))
         except Exception as exc:  # pragma: no cover
             self._queue_event('log', f'未处理异常: {exc}')
-            self.root.after(0, lambda: messagebox.showerror(self._text('dialog_failed_title'), str(exc)))
+            self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_failed_title'), str(exc)))
         finally:
             self.root.after(0, self._finish_job)
 
@@ -1313,18 +1475,15 @@ class PhotoRenamerGUI:
 
 
 def launch_gui() -> int:
-    if tk is None or ttk is None or filedialog is None or messagebox is None:
+    if tk is None or ttk is None or filedialog is None:
         print('tkinter is not available in this Python environment', file=sys.stderr)
         return 1
 
     root = tk.Tk()
-    icon_path = resource_path(os.path.join('assets', 'icon.ico'))
-    if os.path.exists(icon_path):
-        try:
-            root.iconbitmap(icon_path)
-        except Exception:
-            pass
+    root.withdraw()
+    apply_window_icon(root)
     PhotoRenamerGUI(root)
+    root.after(0, lambda: present_root_window(root))
     root.mainloop()
     return 0
 
