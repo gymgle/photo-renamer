@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import sys
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
@@ -34,6 +35,7 @@ except ImportError:  # pragma: no cover
 
 Version = '1.0.0'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H.%M.%S'
+OPEN_SOURCE_URL = 'https://github.com/gymgle/photo-renamer/'
 
 Photos = ['.jpg', '.jpeg', '.heic', '.png', '.gif', '.nef']
 Videos = ['.mp4', '.mov']
@@ -59,8 +61,8 @@ LANGUAGE_OPTIONS = {
 }
 
 APP_DISPLAY_NAMES = {
-    'zh-CN': 'photo-renamer',
-    'en-US': 'photo-renamer',
+    'zh-CN': '照片重命名助手',
+    'en-US': 'Photo Renamer',
 }
 
 UI_MODE_OPTIONS = ('simple', 'pro')
@@ -72,6 +74,7 @@ TRANSLATIONS = {
         'mode_simple': '简洁模式',
         'mode_pro': '专业模式',
         'language_label': '界面语言',
+        'about_button': '关于',
         'settings_frame': '处理设置',
         'advanced_frame': '更多设置',
         'target_dir': '要处理的文件夹',
@@ -132,6 +135,9 @@ TRANSLATIONS = {
         'summary_error_item': '- {message}',
         'summary_more_errors': '- 还有 {value} 条未展示',
         'language_switched': '界面语言已切换为简体中文。',
+        'about_title': '关于',
+        'about_version': '版本: {version}',
+        'about_open_source': '开源地址: {url}',
         'validation_missing_dir': '请先选择要处理的文件夹。',
         'validation_missing_log_dir': '日志保存位置不存在。',
         'validation_invalid_format': '新文件名格式无效。',
@@ -144,6 +150,7 @@ TRANSLATIONS = {
         'mode_simple': 'Simple',
         'mode_pro': 'Pro',
         'language_label': 'Language',
+        'about_button': 'About',
         'settings_frame': 'Settings',
         'advanced_frame': 'More settings',
         'target_dir': 'Folder to process',
@@ -204,6 +211,9 @@ TRANSLATIONS = {
         'summary_error_item': '- {message}',
         'summary_more_errors': '- {value} more not shown',
         'language_switched': 'Switched interface language to English.',
+        'about_title': 'About',
+        'about_version': 'Version: {version}',
+        'about_open_source': 'Open source: {url}',
         'validation_missing_dir': 'Please choose a folder to process first.',
         'validation_missing_log_dir': 'The selected log folder does not exist.',
         'validation_invalid_format': 'The filename format is invalid.',
@@ -227,6 +237,14 @@ def mode_display_name(language: str, mode: str) -> str:
 
 def app_display_name(language: str) -> str:
     return APP_DISPLAY_NAMES.get(language, APP_DISPLAY_NAMES['zh-CN'])
+
+
+def format_about_message(language: str) -> str:
+    return '\n'.join([
+        app_display_name(language),
+        translate(language, 'about_version', version=Version),
+        translate(language, 'about_open_source', url=OPEN_SOURCE_URL),
+    ])
 
 
 def resource_path(relative_path: str) -> str:
@@ -846,6 +864,18 @@ class PhotoRenamerGUI:
         self.language_combo.grid(row=0, column=4, sticky='e')
         self.language_combo.bind('<<ComboboxSelected>>', self._on_language_changed)
 
+        self.about_link = tk.Label(
+            header,
+            text='',
+            fg='#2563eb',
+            cursor='hand2',
+            font=('Segoe UI', 9, 'underline'),
+        )
+        self.about_link.grid(row=0, column=5, sticky='e', padx=(8, 0))
+        self.about_link.bind('<Button-1>', lambda _event: self._show_about_dialog())
+        self.about_link.bind('<Enter>', lambda _event: self.about_link.configure(fg='#1d4ed8'))
+        self.about_link.bind('<Leave>', lambda _event: self.about_link.configure(fg='#2563eb'))
+
         self.form_frame = ttk.LabelFrame(container, text='', padding=10)
         form = self.form_frame
         form.grid(row=1, column=0, sticky='ew')
@@ -992,6 +1022,7 @@ class PhotoRenamerGUI:
         self.language_combo.configure(values=[f'{code} | {name}' for code, name in LANGUAGE_OPTIONS.items()])
         current_code = self.language_var.get()
         self.language_display_var.set(f'{current_code} | {LANGUAGE_OPTIONS.get(current_code, current_code)}')
+        self.about_link.configure(text=self._text('about_button'))
 
         self.form_frame.configure(text=self._text('settings_frame'))
         self.target_dir_label.configure(text=self._text('target_dir'))
@@ -1046,6 +1077,42 @@ class PhotoRenamerGUI:
         if selected_value in LANGUAGE_OPTIONS:
             self.language_var.set(selected_value)
         self._apply_language()
+
+    def _show_about_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self._text('about_title'))
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        content = ttk.Frame(dialog, padding=16)
+        content.pack(fill='both', expand=True)
+
+        ttk.Label(content, text=app_display_name(self.language_var.get()), font=('Segoe UI', 12, 'bold')).pack(anchor='w')
+        ttk.Label(content, text=translate(self.language_var.get(), 'about_version', version=Version)).pack(anchor='w', pady=(8, 0))
+        ttk.Label(content, text=translate(self.language_var.get(), 'about_open_source', url=''), wraplength=420, justify='left').pack(anchor='w', pady=(4, 0))
+
+        repo_link = tk.Label(
+            content,
+            text=OPEN_SOURCE_URL,
+            fg='#2563eb',
+            cursor='hand2',
+            font=('Segoe UI', 9, 'underline'),
+            justify='left',
+            wraplength=420,
+        )
+        repo_link.pack(anchor='w')
+        repo_link.bind('<Button-1>', lambda _event: webbrowser.open(OPEN_SOURCE_URL))
+        repo_link.bind('<Enter>', lambda _event: repo_link.configure(fg='#1d4ed8'))
+        repo_link.bind('<Leave>', lambda _event: repo_link.configure(fg='#2563eb'))
+
+        actions = ttk.Frame(content)
+        actions.pack(fill='x', pady=(12, 0))
+
+        ttk.Button(actions, text='OK', command=dialog.destroy).pack(side='right')
+
+        dialog.update_idletasks()
+        dialog.geometry(f'+{self.root.winfo_rootx() + 80}+{self.root.winfo_rooty() + 80}')
 
     def _on_mode_changed(self, _event=None) -> None:
         selected_value = self.mode_combo.get().strip()

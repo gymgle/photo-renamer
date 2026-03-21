@@ -198,6 +198,19 @@ class PhotoRenamerTests(unittest.TestCase):
 
         self.assertEqual(translated, 'Please choose a folder to process first.')
 
+    def test_format_about_message_contains_version_and_repo_url(self):
+        message = photo_renamer.format_about_message('zh-CN')
+
+        self.assertIn('photo-renamer', message)
+        self.assertIn(f'版本: {photo_renamer.Version}', message)
+        self.assertIn(photo_renamer.OPEN_SOURCE_URL, message)
+
+    def test_format_about_message_supports_english(self):
+        message = photo_renamer.format_about_message('en-US')
+
+        self.assertIn(f'Version: {photo_renamer.Version}', message)
+        self.assertIn(f'Open source: {photo_renamer.OPEN_SOURCE_URL}', message)
+
     def test_init_logger_skips_missing_console_sink(self):
         self._close_logger_handlers()
 
