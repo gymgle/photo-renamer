@@ -2,6 +2,8 @@
 
 photo-renamer 是一个桌面图形界面工具，用于按照拍摄时间重命名照片和视频。
 
+![Screenshot](./assets/screenshot_main_window_cn.png)
+
 它会按以下顺序选择第一个可用的时间来源：
 
 1. 文件名中可识别的时间戳，除非你关闭了这个选项。
@@ -118,6 +120,7 @@ $ python photo_renamer.py
 
 - `windnd` 只在 Windows 下用于拖拽支持。
 - 请不要使用 `ExifRead 3.0.0`，因为它存在 `exifread.heic.NoParser: hdlr` 问题。
+- 在 macOS 上，所使用的 Python 解释器必须带有 Tk 支持。如果看到 `No module named '_tkinter'`，请改用 python.org 官方安装包，或者安装与你当前 Python 次版本对应的 Homebrew `python-tk` 包，例如 `python-tk@3.12`，然后用对应解释器运行 `photo_renamer.py`。
 
 详情：<https://github.com/ianare/exif-py/issues/184>
 
@@ -142,6 +145,11 @@ $ python photo_renamer.py
    ```shell
    $ pyinstaller photo_renamer.spec
    ```
+
+补充说明：
+
+- Windows 使用 `assets/icon.ico`。
+- macOS 需要提供 `assets/icon.icns`。当前 spec 会自动识别 macOS，使用 `.icns`，并构建 `.app` bundle，这样 Finder 和 Dock 才能正确识别图标。
 
 打包后的 `photo-renamer` 可以在 `dist` 目录中找到。
 

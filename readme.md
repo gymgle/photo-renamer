@@ -2,6 +2,8 @@
 
 photo-renamer is a desktop GUI tool that renames photos and videos by capture time.
 
+![Screenshot](./assets/screenshot_main_window_en.png)
+
 It uses the first available time source in this order:
 
 1. A usable timestamp found in the file name, unless that option is disabled.
@@ -118,6 +120,7 @@ Notes:
 
 - `windnd` is only used on Windows for drag-and-drop support.
 - Please do not use `ExifRead 3.0.0` due to `exifread.heic.NoParser: hdlr`.
+- On macOS, the Python interpreter must include Tk support. If you see `No module named '_tkinter'`, use the official python.org installer, or install the matching Homebrew package such as `python-tk@3.12`, then run `photo_renamer.py` with that interpreter.
 
 Details: https://github.com/ianare/exif-py/issues/184
 
@@ -138,6 +141,11 @@ Build Windows/Linux/macOS executable binary file via PyInstaller.
     ```shell
     $ pyinstaller photo_renamer.spec
     ```
+
+Notes:
+
+- Windows uses `assets/icon.ico`.
+- macOS should provide `assets/icon.icns`. The spec now auto-detects macOS, uses `.icns`, and builds a `.app` bundle so Finder and Dock can recognize the icon.
 
 You can find the packaged `photo-renamer` in `dist` dir.
 

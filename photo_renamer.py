@@ -26,11 +26,13 @@ try:
     import tkinter as tk
     import tkinter.font as tkfont
     from tkinter import filedialog, ttk
-except ImportError:  # pragma: no cover
+    TKINTER_IMPORT_ERROR = None
+except ImportError as exc:  # pragma: no cover
     tk = cast(Any, None)
     tkfont = cast(Any, None)
     filedialog = cast(Any, None)
     ttk = cast(Any, None)
+    TKINTER_IMPORT_ERROR = exc
 
 try:
     import windnd
@@ -274,7 +276,20 @@ def app_icon_path() -> str:
     return resource_path(os.path.join('assets', 'icon.ico'))
 
 
+def app_icon_photo_path() -> str:
+    return resource_path(os.path.join('assets', 'icon.iconset', 'icon_512x512.png'))
+
+
 def apply_window_icon(window) -> None:
+    photo_icon_path = app_icon_photo_path()
+    if tk is not None and os.path.exists(photo_icon_path):
+        try:
+            icon_image = tk.PhotoImage(file=photo_icon_path)
+            window.iconphoto(True, icon_image)
+            setattr(window, '_icon_image_ref', icon_image)
+        except Exception:
+            pass
+
     icon_path = app_icon_path()
     if not os.path.exists(icon_path):
         return
@@ -336,19 +351,21 @@ def center_child_window(window, parent) -> None:
     window.geometry(f'+{x_pos}+{y_pos}')
 
 
-def present_root_window(window) -> None:
+def set_window_alpha(window, alpha: float) -> None:
     try:
-        window.attributes('-alpha', 0.0)
+        window.attributes('-alpha', alpha)
     except Exception:
         pass
+
+
+def present_root_window(window) -> None:
+    set_window_alpha(window, 0.0)
 
     window.deiconify()
     center_window(window)
+    window.update_idletasks()
 
-    try:
-        window.attributes('-alpha', 1.0)
-    except Exception:
-        pass
+    set_window_alpha(window, 1.0)
 
 
 def localize_validation_message(message: 'ValidationError | str', language: str) -> str:
@@ -947,6 +964,28 @@ def open_directory_in_file_manager(directory_path: str) -> None:
     subprocess.Popen(['xdg-open', directory_path])
 
 
+def format_tkinter_unavailable_message() -> str:
+    base_message = 'tkinter is not available in this Python environment.'
+    details = []
+
+    if TKINTER_IMPORT_ERROR is not None:
+        details.append(f'Original import error: {TKINTER_IMPORT_ERROR}')
+
+    if platform.system().lower() == 'darwin':
+        python_minor_version = f'{sys.version_info.major}.{sys.version_info.minor}'
+        details.extend([
+            f'Current interpreter: {sys.executable}',
+            'macOS fix:',
+            '- Install Python from python.org, which includes Tk support by default.',
+            f'- Or, if you use Homebrew Python, install the matching Tk package, for example: brew install python-tk@{python_minor_version}',
+            '- Then run photo_renamer.py with that Python interpreter.',
+        ])
+    else:
+        details.append('Install a Python build that includes Tk support, then run photo_renamer.py again.')
+
+    return '\n'.join([base_message, *details])
+
+
 def print_version() -> None:
     print(f'version {Version}')
 
@@ -1311,9 +1350,12 @@ class PhotoRenamerGUI:
         return max(min_width, min(measured_width, max_width))
 
     def _present_modal_dialog(self, dialog, focus_widget=None, wait: bool = False) -> None:
-        center_child_window(dialog, self.root)
+        set_window_alpha(dialog, 0.0)
         dialog.deiconify()
+        center_child_window(dialog, self.root)
         dialog.lift(self.root)
+        dialog.update_idletasks()
+        set_window_alpha(dialog, 1.0)
         if focus_widget is not None:
             focus_widget.focus_set()
         if wait:
@@ -1510,6 +1552,11 @@ class PhotoRenamerGUI:
                     self._append_log(payload)
                 elif kind == 'progress':
                     self._update_progress(payload)
+                elif kind == 'finish_job':
+                    self._finish_job()
+                elif kind == 'dialog':
+                    title_key, message = payload
+                    self._show_message_dialog(self._text(title_key), message)
         except Empty:
             pass
         self.root.after(120, self._flush_event_queue)
@@ -1597,23 +1644,25 @@ class PhotoRenamerGUI:
         self._refresh_open_log_dir_button()
         self._append_log(self._text('log_start'))
 
-        self.worker = Thread(target=self._run_job, args=(config,), daemon=True)
+        language = self.language_var.get()
+        self.worker = Thread(target=self._run_job, args=(config, language), daemon=True)
         self.worker.start()
 
-    def _run_job(self, config: RunConfig) -> None:
+    def _run_job(self, config: RunConfig, language: str) -> None:
         try:
-            success, result = execute(config, extra_sink=self._emit_log, progress_callback=self._emit_progress, language=self.language_var.get())
+            success, result = execute(config, extra_sink=self._emit_log, progress_callback=self._emit_progress, language=language)
             if success and isinstance(result, RunStats):
                 self._queue_event('progress', result)
-                summary_message = format_stats_summary(result, config.preview, language=self.language_var.get(), include_log_file=False)
-                self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_done_title'), summary_message))
+                summary_message = format_stats_summary(result, config.preview, language=language, include_log_file=False)
+                self._queue_event('finish_job', None)
+                self._queue_event('dialog', ('dialog_done_title', summary_message))
             else:
-                self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_failed_title'), str(result)))
+                self._queue_event('finish_job', None)
+                self._queue_event('dialog', ('dialog_failed_title', str(result)))
         except Exception as exc:  # pragma: no cover
             self._queue_event('log', f'未处理异常: {exc}')
-            self.root.after(0, lambda: self._show_message_dialog(self._text('dialog_failed_title'), str(exc)))
-        finally:
-            self.root.after(0, self._finish_job)
+            self._queue_event('finish_job', None)
+            self._queue_event('dialog', ('dialog_failed_title', str(exc)))
 
     def _finish_job(self) -> None:
         self.job_running = False
@@ -1623,7 +1672,7 @@ class PhotoRenamerGUI:
 
 def launch_gui() -> int:
     if tk is None or ttk is None or filedialog is None:
-        print('tkinter is not available in this Python environment', file=sys.stderr)
+        print(format_tkinter_unavailable_message(), file=sys.stderr)
         return 1
 
     root = tk.Tk()

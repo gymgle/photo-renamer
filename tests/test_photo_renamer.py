@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from queue import Queue
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from types import SimpleNamespace
@@ -155,6 +156,26 @@ class PhotoRenamerTests(unittest.TestCase):
             photo_renamer.open_directory_in_file_manager('D:/logs')
 
         mock_startfile.assert_called_once_with('D:/logs')
+
+    def test_format_tkinter_unavailable_message_includes_macos_guidance(self):
+        with patch('photo_renamer.platform.system', return_value='Darwin'), \
+                patch('photo_renamer.TKINTER_IMPORT_ERROR', ModuleNotFoundError("No module named '_tkinter'")):
+            message = photo_renamer.format_tkinter_unavailable_message()
+
+        self.assertIn('tkinter is not available in this Python environment.', message)
+        self.assertIn("Original import error: No module named '_tkinter'", message)
+        self.assertIn('macOS fix:', message)
+        self.assertIn('python.org', message)
+        self.assertIn('brew install python-tk@', message)
+
+    def test_format_tkinter_unavailable_message_has_generic_guidance_on_other_platforms(self):
+        with patch('photo_renamer.platform.system', return_value='Linux'), \
+                patch('photo_renamer.TKINTER_IMPORT_ERROR', ImportError('missing tkinter')):
+            message = photo_renamer.format_tkinter_unavailable_message()
+
+        self.assertIn('tkinter is not available in this Python environment.', message)
+        self.assertIn('Original import error: missing tkinter', message)
+        self.assertIn('Install a Python build that includes Tk support', message)
 
     def test_init_logger_returns_absolute_log_path_for_default_folder(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -383,14 +404,37 @@ class PhotoRenamerTests(unittest.TestCase):
 
     def test_apply_window_icon_sets_default_and_current_icon(self):
         window = Mock()
+        fake_icon_image = object()
+        fake_tk = SimpleNamespace(PhotoImage=Mock(return_value=fake_icon_image))
 
-        with patch('photo_renamer.app_icon_path', return_value='C:/tmp/icon.ico'), \
+        with patch.object(photo_renamer, 'tk', fake_tk), \
+                patch('photo_renamer.app_icon_photo_path', return_value='C:/tmp/icon.png'), \
+                patch('photo_renamer.app_icon_path', return_value='C:/tmp/icon.ico'), \
                 patch('photo_renamer.os.path.exists', return_value=True):
             photo_renamer.apply_window_icon(window)
 
+        fake_tk.PhotoImage.assert_called_once_with(file='C:/tmp/icon.png')
+        window.iconphoto.assert_called_once_with(True, fake_icon_image)
         window.iconbitmap.assert_any_call(default='C:/tmp/icon.ico')
         window.iconbitmap.assert_any_call('C:/tmp/icon.ico')
         self.assertEqual(window.iconbitmap.call_count, 2)
+
+    def test_apply_window_icon_skips_iconphoto_when_png_missing(self):
+        window = Mock()
+        fake_tk = SimpleNamespace(PhotoImage=Mock())
+
+        def fake_exists(path):
+            return path.endswith('.ico')
+
+        with patch.object(photo_renamer, 'tk', fake_tk), \
+                patch('photo_renamer.app_icon_photo_path', return_value='C:/tmp/icon.png'), \
+                patch('photo_renamer.app_icon_path', return_value='C:/tmp/icon.ico'), \
+                patch('photo_renamer.os.path.exists', side_effect=fake_exists):
+            photo_renamer.apply_window_icon(window)
+
+        fake_tk.PhotoImage.assert_not_called()
+        window.iconphoto.assert_not_called()
+        window.iconbitmap.assert_any_call(default='C:/tmp/icon.ico')
 
     def test_center_window_places_window_in_screen_center(self):
         window = Mock()
@@ -462,18 +506,45 @@ class PhotoRenamerTests(unittest.TestCase):
 
         dialog = Mock()
         focus_widget = Mock()
+        call_order = []
 
-        with patch('photo_renamer.center_child_window') as center_child_window:
+        def record_alpha(_name, value):
+            call_order.append(f'alpha:{value}')
+
+        def record_deiconify():
+            call_order.append('deiconify')
+
+        def record_center(_dialog, _root):
+            call_order.append('center')
+
+        dialog.attributes.side_effect = record_alpha
+        dialog.deiconify.side_effect = record_deiconify
+
+        with patch('photo_renamer.center_child_window', side_effect=record_center) as center_child_window:
             gui._present_modal_dialog(dialog, focus_widget=focus_widget, wait=True)
 
         center_child_window.assert_called_once_with(dialog, gui.root)
+        dialog.attributes.assert_any_call('-alpha', 0.0)
+        dialog.attributes.assert_any_call('-alpha', 1.0)
         dialog.deiconify.assert_called_once_with()
+        dialog.update_idletasks.assert_called_once_with()
         dialog.lift.assert_called_once_with(gui.root)
         focus_widget.focus_set.assert_called_once_with()
         gui.root.wait_window.assert_called_once_with(dialog)
+        self.assertEqual(call_order, ['alpha:0.0', 'deiconify', 'center', 'alpha:1.0'])
 
     def test_present_root_window_reveals_after_centering(self):
         window = Mock()
+        call_order = []
+
+        def record_alpha(_name, value):
+            call_order.append(f'alpha:{value}')
+
+        def record_deiconify():
+            call_order.append('deiconify')
+
+        window.attributes.side_effect = record_alpha
+        window.deiconify.side_effect = record_deiconify
 
         with patch('photo_renamer.center_window') as center_window:
             photo_renamer.present_root_window(window)
@@ -481,14 +552,17 @@ class PhotoRenamerTests(unittest.TestCase):
         center_window.assert_called_once_with(window)
         window.attributes.assert_any_call('-alpha', 0.0)
         window.deiconify.assert_called_once_with()
+        window.update_idletasks.assert_called_once_with()
         window.attributes.assert_any_call('-alpha', 1.0)
+        self.assertEqual(call_order, ['alpha:0.0', 'deiconify', 'alpha:1.0'])
 
     def test_dialog_wraplength_respects_min_and_max_width(self):
         gui = object.__new__(photo_renamer.PhotoRenamerGUI)
         fake_font = Mock()
         fake_font.measure.side_effect = lambda text: len(text) * 10
+        fake_tkfont = SimpleNamespace(nametofont=Mock(return_value=fake_font))
 
-        with patch('photo_renamer.tkfont.nametofont', return_value=fake_font):
+        with patch.object(photo_renamer, 'tkfont', fake_tkfont):
             short_wrap = gui._dialog_wraplength('short')
             long_wrap = gui._dialog_wraplength('x' * 200)
 
@@ -499,8 +573,9 @@ class PhotoRenamerTests(unittest.TestCase):
         gui = object.__new__(photo_renamer.PhotoRenamerGUI)
         fake_font = Mock()
         fake_font.measure.side_effect = lambda text: len(text) * 10
+        fake_tkfont = SimpleNamespace(nametofont=Mock(return_value=fake_font))
 
-        with patch('photo_renamer.tkfont.nametofont', return_value=fake_font):
+        with patch.object(photo_renamer, 'tkfont', fake_tkfont):
             wrap = gui._dialog_wraplength('done', min_width=420)
 
         self.assertEqual(wrap, 420)
@@ -522,18 +597,21 @@ class PhotoRenamerTests(unittest.TestCase):
         ok_button = Mock()
         content = Mock()
         actions = Mock()
+        fake_ttk = SimpleNamespace(
+            Frame=Mock(side_effect=[content, actions]),
+            Label=Mock(),
+            Button=Mock(return_value=ok_button),
+        )
         gui._create_modal_dialog = Mock(return_value=dialog)
         gui._dialog_wraplength = Mock(return_value=420)
         gui._present_modal_dialog = Mock()
 
-        with patch('photo_renamer.ttk.Frame', side_effect=[content, actions]), \
-                patch('photo_renamer.ttk.Label') as mock_label, \
-                patch('photo_renamer.ttk.Button', return_value=ok_button):
+        with patch.object(photo_renamer, 'ttk', fake_ttk):
             gui._show_message_dialog('Finished', 'Summary', min_width=420)
 
         dialog.minsize.assert_called_once_with(420, 1)
         gui._dialog_wraplength.assert_called_once_with('Summary', min_width=420)
-        mock_label.return_value.pack.assert_called_once_with(anchor='w', fill='x')
+        fake_ttk.Label.return_value.pack.assert_called_once_with(anchor='w', fill='x')
         gui._present_modal_dialog.assert_called_once_with(dialog, focus_widget=ok_button, wait=True)
 
     def test_start_job_uses_custom_modal_dialog_when_busy(self):
@@ -694,6 +772,45 @@ class PhotoRenamerTests(unittest.TestCase):
         gui.log_dir_entry.configure.assert_called_once_with(state='normal')
         gui.log_dir_button.configure.assert_called_once_with(state='normal')
         gui.open_log_dir_button.grid.assert_called_once_with()
+
+    def test_flush_event_queue_finishes_job_before_showing_dialog(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui.event_queue = Queue()
+        gui.root = Mock()
+        gui._append_log = Mock()
+        gui._update_progress = Mock()
+        gui._finish_job = Mock()
+        gui._show_message_dialog = Mock()
+        gui._text = lambda key, **kwargs: {
+            'dialog_done_title': 'Finished',
+        }[key]
+
+        gui.event_queue.put(('finish_job', None))
+        gui.event_queue.put(('dialog', ('dialog_done_title', 'Summary')))
+
+        gui._flush_event_queue()
+
+        gui._finish_job.assert_called_once_with()
+        gui._show_message_dialog.assert_called_once_with('Finished', 'Summary')
+        gui.root.after.assert_called_once_with(120, gui._flush_event_queue)
+
+    def test_run_job_queues_finish_before_done_dialog(self):
+        gui = object.__new__(photo_renamer.PhotoRenamerGUI)
+        gui._queue_event = Mock()
+        stats = photo_renamer.RunStats(total_files=1, processed_files=1, renamed_files=1)
+
+        with patch('photo_renamer.execute', return_value=(True, stats)), \
+                patch('photo_renamer.format_stats_summary', return_value='Summary'):
+            gui._run_job(photo_renamer.RunConfig(dir_path='D:/photos'), 'en-US')
+
+        self.assertEqual(
+            gui._queue_event.call_args_list,
+            [
+                unittest.mock.call('progress', stats),
+                unittest.mock.call('finish_job', None),
+                unittest.mock.call('dialog', ('dialog_done_title', 'Summary')),
+            ],
+        )
 
     def test_main_without_args_launches_gui(self):
         with patch('photo_renamer.launch_gui', return_value=0) as launch_gui:
